@@ -298,12 +298,16 @@
   const Financas = global.Financas || {};
   const {
     STORAGE_KEYS = { CATEGORIES: 'financas_categorias', TRANSACTIONS: 'financas_lancamentos' },
+    DEFAULT_TAGS,
     StorageEngine,
     loadCategories,
     saveCategories,
     loadTransactions,
     saveTransactions,
+    loadTags,
+    saveTags,
     generateTransactionsMultiYear,
+    createExpenseWithRepasseMirror,
     deleteTransactionCascade,
     updateTransactionCascade,
     calculateTotalsByMonthAndYear,
@@ -953,8 +957,362 @@
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // ÁREA 5: CLASSIFICAÇÃO / TAGS DINÂMICAS
+  // ---------------------------------------------------------------------------
+  describe('5. Classificação / Tags Dinâmicas dos Lançamentos', () => {
+
+    beforeEach(() => {
+      MockEnvironment.setup();
+    });
+
+    afterEach(() => {
+      MockEnvironment.teardown();
+    });
+
+    it('5.1 loadTags inicializa com lista vazia [] caso o storage esteja vazio', () => {
+      MockEnvironment.mockLocal.clear();
+      const tags = loadTags();
+      expect(tags).toHaveLength(0);
+      expect(tags).toEqual([]);
+    });
+
+    it('5.2 saveTags persiste nova tag no localStorage com sucesso', () => {
+      const novasTags = ['Alimentação', 'Tecnologia', 'Streaming'];
+      saveTags(novasTags, true);
+      const res = loadTags();
+      expect(res).toHaveLength(3);
+      expect(res).toContain('Streaming');
+    });
+
+    it('5.3 normalizeTransaction preserva a propriedade tag e mapeia aliases', () => {
+      const t1 = normalizeTransaction({ description: 'Almoço', tag: 'Alimentação' });
+      expect(t1.tag).toBe('Alimentação');
+
+      const t2 = normalizeTransaction({ description: 'Cinema', classificacao: 'Lazer' });
+      expect(t2.tag).toBe('Lazer');
+
+      const t3 = normalizeTransaction({ description: 'Sem tag' });
+      expect(t3.tag).toBe('');
+    });
+
+    it('5.4 generateTransactionsMultiYear replica a tag para todas as parcelas geradas', () => {
+      const parcelas = generateTransactionsMultiYear({
+        description: 'iPhone',
+        value: 1000,
+        installment: '1/3',
+        monthIndex: 0,
+        year: 2026,
+        tag: 'Tecnologia'
+      });
+
+      expect(parcelas).toHaveLength(3);
+      parcelas.forEach(p => {
+        expect(p.tag).toBe('Tecnologia');
+      });
+    });
+
+    it('5.5 generateTransactionsMultiYear replica a tag na propagação até Dezembro', () => {
+      const fixas = generateTransactionsMultiYear({
+        description: 'Internet Fibra',
+        value: 120,
+        installment: '-',
+        monthIndex: 9, // Outubro
+        year: 2026,
+        categoryType: 'Conta Fixa',
+        shouldPropagate: true,
+        tag: 'Moradia'
+      });
+
+      expect(fixas).toHaveLength(3); // Out, Nov, Dez
+      fixas.forEach(f => {
+        expect(f.tag).toBe('Moradia');
+      });
+    });
+
+    it('5.6 updateTransactionCascade propaga a alteração de tag para meses seguintes do mesmo groupId', () => {
+      const items = [
+        { id: 't1', groupId: 'g1', year: 2026, monthIndex: 2, description: 'Luz', value: 100, installment: '-', categoryType: 'Conta Fixa', tag: 'Moradia' },
+        { id: 't2', groupId: 'g1', year: 2026, monthIndex: 3, description: 'Luz', value: 100, installment: '-', categoryType: 'Conta Fixa', tag: 'Moradia' },
+        { id: 't3', groupId: 'g1', year: 2026, monthIndex: 4, description: 'Luz', value: 100, installment: '-', categoryType: 'Conta Fixa', tag: 'Moradia' }
+      ];
+
+      const res = updateTransactionCascade(items, 't2', { tag: 'Serviços' }, true);
+      const atualizados = res.transactions;
+
+      expect(atualizados.find(t => t.id === 't1').tag).toBe('Moradia'); // Mês anterior mantido
+      expect(atualizados.find(t => t.id === 't2').tag).toBe('Serviços'); // Alvo atualizado
+      expect(atualizados.find(t => t.id === 't3').tag).toBe('Serviços'); // Futuro atualizado
+    });
+
+    it('5.7 Exclusão de tag na lista não afeta os lançamentos antigos que utilizavam essa tag', () => {
+      // Tags ativas: Alimentação e Transporte
+      saveTags(['Alimentação', 'Transporte'], true);
+      
+      // Lançamentos existentes com a tag Alimentação
+      const lancamentos = [
+        { id: 'l1', description: 'Supermercado', value: 200, tag: 'Alimentação', year: 2026, monthIndex: 0, categoryName: 'Cartão' },
+        { id: 'l2', description: 'Metrô', value: 50, tag: 'Transporte', year: 2026, monthIndex: 0, categoryName: 'Cartão' }
+      ];
+      saveTransactions(lancamentos, true);
+
+      // Exclui 'Alimentação' da lista de tags disponíveis
+      const novasTags = loadTags().filter(t => t !== 'Alimentação');
+      saveTags(novasTags, true);
+
+      // As tags disponíveis agora têm apenas 'Transporte'
+      expect(loadTags()).toEqual(['Transporte']);
+
+      // Lançamento antigo preserva rigorosamente a tag 'Alimentação'
+      const transCarregadas = loadTransactions();
+      expect(transCarregadas.find(t => t.id === 'l1').tag).toBe('Alimentação');
+      expect(transCarregadas.find(t => t.id === 'l2').tag).toBe('Transporte');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // ÁREA 6: REPASSES COM LANÇAMENTO DUPLO, VINCULAÇÃO (linkedId), DELEÇÃO E EDIÇÃO SINCRONIZADA
+  // ---------------------------------------------------------------------------
+  describe('6. Repasses com Lançamento Duplo e Pares Vinculados (linkedId)', () => {
+
+    beforeEach(() => {
+      MockEnvironment.setup();
+    });
+
+    afterEach(() => {
+      MockEnvironment.teardown();
+    });
+
+    const cardCategory = { id: 'cat_card_1', name: 'Cartão Sofisa', type: 'Cartão de Crédito' };
+    const repasseCategory = { id: 'cat_rep_1', name: 'Francisca', type: 'Repasse' };
+
+    it('6.1 createExpenseWithRepasseMirror cria dois lançamentos simultâneos vinculados por linkedId único', () => {
+      const result = createExpenseWithRepasseMirror({
+        description: 'Almoço Executivo',
+        value: 120.50,
+        installment: '-',
+        monthIndex: 4,
+        year: 2026,
+        cardCategory,
+        repasseCategory,
+        tag: 'Alimentação'
+      });
+
+      expect(result.expenses).toHaveLength(1);
+      expect(result.revenues).toHaveLength(1);
+      expect(result.all).toHaveLength(2);
+
+      const exp = result.expenses[0];
+      const rev = result.revenues[0];
+
+      // Ambos devem compartilhar o mesmo linkedId
+      expect(exp.linkedId).toBeTruthy();
+      expect(exp.linkedId).toBe(rev.linkedId);
+
+      // Valores idênticos
+      expect(exp.value).toBe(120.50);
+      expect(rev.value).toBe(120.50);
+
+      // Despesa no cartão vs Receita no repasse
+      expect(exp.categoryType).toBe('Cartão de Crédito');
+      expect(exp.categoryId).toBe('cat_card_1');
+
+      expect(rev.categoryType).toBe('Repasse');
+      expect(rev.categoryId).toBe('cat_rep_1');
+      expect(rev.isRevenue).toBe(true);
+
+      // Rastreabilidade visual no repasse
+      expect(rev.description).toBe('Almoço Executivo ( Cartão Sofisa )');
+      expect(exp.tag).toBe('Alimentação');
+      expect(rev.tag).toBe('Alimentação');
+    });
+
+    it('6.2 createExpenseWithRepasseMirror suporta parcelamento (1/3) gerando pares vinculados individualmente', () => {
+      const result = createExpenseWithRepasseMirror({
+        description: 'Celular Novo',
+        value: 300,
+        installment: '1/3',
+        monthIndex: 0,
+        year: 2026,
+        cardCategory,
+        repasseCategory,
+        tag: 'Tecnologia'
+      });
+
+      expect(result.expenses).toHaveLength(3);
+      expect(result.revenues).toHaveLength(3);
+      expect(result.all).toHaveLength(6);
+
+      for (let i = 0; i < 3; i++) {
+        const expParcel = result.expenses[i];
+        const revParcel = result.revenues[i];
+
+        expect(expParcel.linkedId).toBeTruthy();
+        expect(expParcel.linkedId).toBe(revParcel.linkedId);
+        expect(expParcel.installment).toBe(`${i + 1}/3`);
+        expect(revParcel.installment).toBe(`${i + 1}/3`);
+        expect(revParcel.isRevenue).toBe(true);
+        expect(revParcel.description).toBe('Celular Novo ( Cartão Sofisa )');
+      }
+
+      // Garante que parcelas diferentes não têm o mesmo linkedId entre si
+      expect(result.expenses[0].linkedId).not.toBe(result.expenses[1].linkedId);
+    });
+
+    it('6.3 Exclusão em cascata (deleteTransactionCascade): apagar a despesa do cartão apaga o repasse vinculado', () => {
+      const pair = createExpenseWithRepasseMirror({
+        description: 'Jantar',
+        value: 90,
+        monthIndex: 5,
+        year: 2026,
+        cardCategory,
+        repasseCategory
+      });
+
+      const initialTransactions = [...pair.all];
+      expect(initialTransactions).toHaveLength(2);
+
+      const cardExpense = pair.expenses[0];
+      const res = deleteTransactionCascade(initialTransactions, cardExpense.id, false);
+
+      // Ambos foram excluídos (restam 0)
+      expect(res.transactions).toHaveLength(0);
+      expect(res.deletedCount).toBe(2);
+    });
+
+    it('6.4 Exclusão a partir do repasse apaga simetricamente a despesa do cartão associada', () => {
+      const pair = createExpenseWithRepasseMirror({
+        description: 'Farmácia',
+        value: 45,
+        monthIndex: 3,
+        year: 2026,
+        cardCategory,
+        repasseCategory
+      });
+
+      const initial = [...pair.all];
+      const repasseRev = pair.revenues[0];
+      const res = deleteTransactionCascade(initial, repasseRev.id, false);
+
+      expect(res.transactions).toHaveLength(0);
+      expect(res.deletedCount).toBe(2);
+    });
+
+    it('6.5 Exclusão com propagação futura de parcelas vinculadas remove as parcelas futuras de ambos os lados', () => {
+      const pair = createExpenseWithRepasseMirror({
+        description: 'Monitor',
+        value: 200,
+        installment: '1/3',
+        monthIndex: 2,
+        year: 2026,
+        cardCategory,
+        repasseCategory
+      });
+
+      const initial = [...pair.all];
+      expect(initial).toHaveLength(6);
+
+      // Exclui a partir da parcela 2/3 (mês index 3) com shouldDeleteSubsequent = true
+      const expParcela2 = pair.expenses[1];
+      const res = deleteTransactionCascade(initial, expParcela2.id, true);
+
+      // Restam apenas a parcela 1/3 do cartão e a 1/3 do repasse (total 2)
+      expect(res.transactions).toHaveLength(2);
+      expect(res.transactions.every(t => t.installment === '1/3')).toBe(true);
+      expect(res.deletedCount).toBe(4); // Excluídas 2 do cartão + 2 do repasse
+    });
+
+    it('6.6 Edição (updateTransactionCascade): alterar valor da despesa no cartão sincroniza a receita espelhada', () => {
+      const pair = createExpenseWithRepasseMirror({
+        description: 'Mercado',
+        value: 100,
+        monthIndex: 1,
+        year: 2026,
+        cardCategory,
+        repasseCategory,
+        tag: 'Alimentação'
+      });
+
+      const initial = [...pair.all];
+      const cardExp = pair.expenses[0];
+
+      // Edita valor para 150 e descrição para 'Supermercado'
+      const res = updateTransactionCascade(initial, cardExp.id, {
+        value: 150,
+        description: 'Supermercado'
+      }, false);
+
+      const expAtualizado = res.transactions.find(t => t.id === cardExp.id);
+      const revAtualizado = res.transactions.find(t => t.id === pair.revenues[0].id);
+
+      expect(expAtualizado.value).toBe(150);
+      expect(expAtualizado.description).toBe('Supermercado');
+
+      // Receita espelhada tem valor atualizado para 150 e preserva o sufixo "( Cartão Sofisa )"
+      expect(revAtualizado.value).toBe(150);
+      expect(revAtualizado.description).toBe('Supermercado ( Cartão Sofisa )');
+      expect(res.updatedCount).toBe(2);
+    });
+
+    it('6.7 Edição com propagação futura sincroniza parcelas futuras do cartão e do repasse espelho', () => {
+      const pair = createExpenseWithRepasseMirror({
+        description: 'Curso',
+        value: 100,
+        installment: '1/3',
+        monthIndex: 0,
+        year: 2026,
+        cardCategory,
+        repasseCategory
+      });
+
+      const initial = [...pair.all];
+      const expParcela2 = pair.expenses[1];
+
+      // Atualiza a partir da parcela 2 com propagação futura
+      const res = updateTransactionCascade(initial, expParcela2.id, {
+        value: 125,
+        description: 'Curso Avançado'
+      }, true);
+
+      const items = res.transactions;
+
+      // Parcela 1/3 mantida em 100
+      expect(items.find(t => t.id === pair.expenses[0].id).value).toBe(100);
+      expect(items.find(t => t.id === pair.revenues[0].id).value).toBe(100);
+
+      // Parcelas 2/3 e 3/3 do cartão atualizadas para 125
+      expect(items.find(t => t.id === pair.expenses[1].id).value).toBe(125);
+      expect(items.find(t => t.id === pair.expenses[2].id).value).toBe(125);
+
+      // Parcelas 2/3 e 3/3 do repasse sincronizadas para 125
+      expect(items.find(t => t.id === pair.revenues[1].id).value).toBe(125);
+      expect(items.find(t => t.id === pair.revenues[2].id).value).toBe(125);
+    });
+
+    it('6.8 Neutralidade Financeira no Dashboard: Par de Cartão + Repasse gera impacto neutro no Saldo Previsto', () => {
+      const pair = createExpenseWithRepasseMirror({
+        description: 'Presente Amigo',
+        value: 250,
+        monthIndex: 7,
+        year: 2026,
+        cardCategory,
+        repasseCategory
+      });
+
+      const categories = [cardCategory, repasseCategory];
+      const summary = calculateTotalsByMonthAndYear(pair.all, categories, 7, 2026);
+
+      // Despesa do Cartão = 250
+      expect(summary.totalDespesas).toBe(250);
+      // Receita do Repasse = 250
+      expect(summary.totalReceitas).toBe(250);
+      // Saldo Previsto permanece exatamente 0 (neutro)
+      expect(summary.saldoPrevisto).toBe(0);
+    });
+  });
+
   // ===========================================================================
-  // 5. EXECUTOR PRINCIPAL (RUNNER) & FORMATAÇÃO VISUAL DO CONSOLE
+  // 7. EXECUTOR PRINCIPAL (RUNNER) & FORMATAÇÃO VISUAL DO CONSOLE
   // ===========================================================================
 
   async function runTests() {

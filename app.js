@@ -12,10 +12,13 @@
 const STORAGE_KEYS = {
   CATEGORIES: 'financas_categorias',
   TRANSACTIONS: 'financas_lancamentos',
+  TAGS: 'finance_tags',
   JSONBIN_KEY: 'financas_jsonbin_key',
   JSONBIN_BIN_ID: 'financas_jsonbin_bin_id',
   LAST_UPDATED: 'financas_last_updated'
 };
+
+const DEFAULT_TAGS = [];
 
 const CATEGORY_TYPES = [
   { id: 'Receita', label: 'Receitas', badgeClass: 'badge-receita', isRevenue: true },
@@ -153,8 +156,9 @@ function normalizeTransaction(item, idx = 0) {
   const isPaid = Boolean(item.isPaid !== undefined ? item.isPaid : (item.pago !== undefined ? item.pago : (item.status === true || item.status === 'pago')));
   const isRevenue = item.isRevenue !== undefined ? Boolean(item.isRevenue) : undefined;
   const categoryType = item.categoryType ? normalizeCategoryType(item.categoryType) : undefined;
+  const tag = (item.tag || item.classificacao || item.classification || '').toString().trim();
 
-  return { id, groupId, linkedId, categoryId, categoryName, categoryType, year, monthIndex, description, installment, value, isPaid, isRevenue };
+  return { id, groupId, linkedId, categoryId, categoryName, categoryType, year, monthIndex, description, installment, value, isPaid, isRevenue, tag };
 }
 
 // =============================================================================
@@ -250,6 +254,164 @@ function saveTransactions(transactions, skipTouch = false) {
   return saved;
 }
 
+function loadTags() {
+  let data = StorageEngine.get(STORAGE_KEYS.TAGS);
+  if (!data) {
+    data = StorageEngine.get('financas_tags');
+  }
+  if (Array.isArray(data)) {
+    return data.map(t => String(t).trim()).filter(Boolean);
+  }
+  // Inicia completamente vazia ([]), sem valores padrão
+  saveTags([], true);
+  return [];
+}
+
+function saveTags(tags, skipTouch = false) {
+  const list = Array.isArray(tags) ? tags.map(t => String(t).trim()).filter(Boolean) : [];
+  const saved = StorageEngine.set(STORAGE_KEYS.TAGS, list);
+  StorageEngine.set('financas_tags', list);
+  if (!skipTouch) {
+    touchLastUpdated();
+    if (typeof triggerCloudSync === 'function') {
+      triggerCloudSync();
+    }
+  }
+  return saved;
+}
+
+function renderTagSelectOptions(selectedTag = '') {
+  if (!DOM.itemTag) return;
+  const current = selectedTag !== undefined ? String(selectedTag).trim() : (DOM.itemTag.value || '');
+  const tags = (typeof AppState !== 'undefined' && Array.isArray(AppState.tags)) ? AppState.tags : loadTags();
+
+  let html = '<option value="">Selecione uma classificação...</option>';
+  tags.forEach(tag => {
+    const isSelected = (current && current.toLowerCase() === tag.toLowerCase()) ? ' selected' : '';
+    html += `<option value="${escapeHTML(tag)}"${isSelected}>${escapeHTML(tag)}</option>`;
+  });
+
+  // Regra de segurança na exclusão: se o lançamento antigo tiver uma tag que foi excluída da lista disponível,
+  // mantém a opção selecionada no formulário de edição para não perder a informação:
+  if (current && !tags.some(t => t.toLowerCase() === current.toLowerCase())) {
+    html += `<option value="${escapeHTML(current)}" selected>${escapeHTML(current)}</option>`;
+  }
+
+  DOM.itemTag.innerHTML = html;
+  if (current) {
+    DOM.itemTag.value = current;
+  }
+}
+
+function openManageTagsModal() {
+  if (!DOM.modalManageTagsOverlay) return;
+  document.body.style.overflow = 'hidden';
+  DOM.modalManageTagsOverlay.style.display = 'flex';
+  requestAnimationFrame(() => {
+    DOM.modalManageTagsOverlay.classList.add('active');
+  });
+  if (DOM.newTagNameInput) {
+    DOM.newTagNameInput.value = '';
+    DOM.newTagNameInput.style.borderColor = '';
+  }
+  if (DOM.newTagError) {
+    DOM.newTagError.textContent = '';
+  }
+  renderManageTagsList();
+  setTimeout(() => {
+    DOM.newTagNameInput?.focus();
+  }, 100);
+}
+
+function closeManageTagsModal() {
+  if (!DOM.modalManageTagsOverlay) return;
+  document.body.style.overflow = '';
+  DOM.modalManageTagsOverlay.classList.remove('active');
+  setTimeout(() => {
+    DOM.modalManageTagsOverlay.style.display = 'none';
+  }, 250);
+  renderTagSelectOptions();
+}
+
+function addTagFromModal() {
+  if (!DOM.newTagNameInput) return;
+  const name = DOM.newTagNameInput.value.trim();
+  if (!name) {
+    if (DOM.newTagError) DOM.newTagError.textContent = 'Informe o nome da classificação.';
+    DOM.newTagNameInput.style.borderColor = 'var(--danger)';
+    DOM.newTagNameInput.focus();
+    return;
+  }
+
+  const existing = AppState.tags.some(t => t.toLowerCase() === name.toLowerCase());
+  if (existing) {
+    if (DOM.newTagError) DOM.newTagError.textContent = `A classificação "${name}" já existe.`;
+    DOM.newTagNameInput.style.borderColor = 'var(--danger)';
+    DOM.newTagNameInput.focus();
+    return;
+  }
+
+  AppState.tags.push(name);
+  saveTags(AppState.tags);
+  DOM.newTagNameInput.value = '';
+  if (DOM.newTagError) DOM.newTagError.textContent = '';
+  DOM.newTagNameInput.style.borderColor = '';
+
+  renderManageTagsList();
+  renderTagSelectOptions(name);
+  showToast(`Classificação "${name}" adicionada com sucesso!`, 'success');
+  DOM.newTagNameInput.focus();
+}
+
+function deleteTagFromModal(tagName) {
+  if (!tagName) return;
+  const confirmed = window.confirm(`Deseja remover a classificação "${tagName}" da lista de opções?\n\nLançamentos já criados com esta classificação manterão a tag intacta.`);
+  if (!confirmed) return;
+
+  AppState.tags = AppState.tags.filter(t => t.toLowerCase() !== tagName.toLowerCase());
+  saveTags(AppState.tags);
+
+  renderManageTagsList();
+  renderTagSelectOptions();
+  showToast(`Classificação "${tagName}" removida da lista.`, 'info');
+}
+
+function renderManageTagsList() {
+  if (!DOM.manageTagsList) return;
+  DOM.manageTagsList.innerHTML = '';
+
+  const tags = Array.isArray(AppState.tags) ? AppState.tags : [];
+  if (tags.length === 0) {
+    if (DOM.manageTagsEmpty) DOM.manageTagsEmpty.style.display = 'block';
+    return;
+  }
+
+  if (DOM.manageTagsEmpty) DOM.manageTagsEmpty.style.display = 'none';
+
+  tags.forEach(tag => {
+    const li = document.createElement('li');
+    li.className = 'manage-tag-item';
+    li.innerHTML = `
+      <span class="manage-tag-name">${escapeHTML(tag)}</span>
+      <button type="button" class="btn-delete-tag" data-tag="${escapeHTML(tag)}" title="Excluir classificação" aria-label="Excluir classificação ${escapeHTML(tag)}">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+        </svg>
+      </button>
+    `;
+
+    const btnDel = li.querySelector('.btn-delete-tag');
+    if (btnDel) {
+      btnDel.addEventListener('click', () => {
+        deleteTagFromModal(tag);
+      });
+    }
+
+    DOM.manageTagsList.appendChild(li);
+  });
+}
+
 /**
  * LÓGICA DE PARCELAMENTO & VIRADA DE ANO:
  * Gera parcelas e contas fixas/variáveis considerando a transição de ano (ex: mês 11 de 2026 -> mês 0 de 2027).
@@ -263,6 +425,7 @@ function saveTransactions(transactions, skipTouch = false) {
  * @param {string} params.categoryName
  * @param {string} [params.categoryType='Conta Fixa']
  * @param {boolean} [params.isPaid=false]
+ * @param {string} [params.tag='']
  * @returns {Array<Object>}
  */
 function generateTransactionsMultiYear({
@@ -277,7 +440,8 @@ function generateTransactionsMultiYear({
   isPaid = false,
   shouldPropagate = true,
   linkedId = null,
-  isRevenue = undefined
+  isRevenue = undefined,
+  tag = ''
 } = {}) {
   const descVal = (description || '').toString().trim();
   const valNum = Number(value) || 0;
@@ -287,6 +451,7 @@ function generateTransactionsMultiYear({
   const typeNorm = normalizeCategoryType(categoryType);
   const isFixedOrVariable = (typeNorm === 'Conta Fixa' || typeNorm === 'Variável Prevista' || typeNorm === 'Receita' || typeNorm === 'Repasse');
   const fractionMatch = installmentRaw.match(/^(\d+)\s*\/\s*(\d+)$/);
+  const tagVal = (tag || '').toString().trim();
 
   // ===========================================================================
   // 1. REGRA PARA CONTAS FIXAS E VARIÁVEIS PREVISTAS:
@@ -311,6 +476,7 @@ function generateTransactionsMultiYear({
         installment: installmentRaw || '-',
         value: valNum,
         isPaid: Boolean(isPaid),
+        tag: tagVal,
         ...(isRevenue !== undefined ? { isRevenue } : {})
       }];
     }
@@ -329,6 +495,7 @@ function generateTransactionsMultiYear({
       installment: installmentRaw || '-',
       value: valNum,
       isPaid: Boolean(isPaid),
+      tag: tagVal,
       ...(isRevenue !== undefined ? { isRevenue } : {})
     }];
 
@@ -347,6 +514,7 @@ function generateTransactionsMultiYear({
         installment: installmentRaw || '-',
         value: valNum,
         isPaid: false,
+        tag: tagVal,
         ...(isRevenue !== undefined ? { isRevenue } : {})
       });
     }
@@ -362,24 +530,6 @@ function generateTransactionsMultiYear({
   // para garantir que as parcelas invadam os meses e anos seguintes corretamente.
   // ===========================================================================
   if (fractionMatch) {
-    if (!shouldPropagate && isFixedOrVariable) {
-      return [{
-        id: 'lanc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-        groupId: null,
-        linkedId: linkedId || null,
-        categoryId: categoryId || null,
-        categoryName: categoryName.trim(),
-        categoryType: typeNorm,
-        year: currentYear,
-        monthIndex: ((currentMonth % 12) + 12) % 12,
-        description: descVal,
-        installment: installmentRaw || '-',
-        value: valNum,
-        isPaid: Boolean(isPaid),
-        ...(isRevenue !== undefined ? { isRevenue } : {})
-      }];
-    }
-
     const currentInst = parseInt(fractionMatch[1], 10);
     const totalInst = parseInt(fractionMatch[2], 10);
 
@@ -413,6 +563,7 @@ function generateTransactionsMultiYear({
         installment: `${p}/${totalInst}`,
         value: valNum,
         isPaid: Boolean(isPaid && i === 0),
+        tag: tagVal,
         ...(isRevenue !== undefined ? { isRevenue } : {})
       });
     }
@@ -433,8 +584,83 @@ function generateTransactionsMultiYear({
     installment: installmentRaw || '-',
     value: valNum,
     isPaid: Boolean(isPaid),
+    tag: tagVal,
     ...(isRevenue !== undefined ? { isRevenue } : {})
   }];
+}
+
+/**
+ * Cria par sincronizado de despesa no Cartão de Crédito e receita no Repasse
+ * vinculados pelo mesmo linkedId único para neutralidade financeira no dashboard.
+ * 
+ * @param {Object} params
+ * @returns {{ expenses: Array<Object>, revenues: Array<Object>, all: Array<Object> }}
+ */
+function createExpenseWithRepasseMirror({
+  description = '',
+  value = 0,
+  installment = '-',
+  monthIndex = 0,
+  year = new Date().getFullYear(),
+  cardCategory = null,
+  repasseCategory = null,
+  shouldPropagate = false,
+  tag = ''
+} = {}) {
+  const generatedExpense = generateTransactionsMultiYear({
+    description,
+    value,
+    installment,
+    monthIndex,
+    year,
+    categoryId: cardCategory ? cardCategory.id : null,
+    categoryName: cardCategory ? cardCategory.name : '',
+    categoryType: cardCategory ? cardCategory.type : 'Cartão de Crédito',
+    isPaid: false,
+    shouldPropagate,
+    tag
+  });
+
+  if (!repasseCategory) {
+    return {
+      expenses: generatedExpense,
+      revenues: [],
+      all: [...generatedExpense]
+    };
+  }
+
+  // Rastreabilidade visual no repasse: sufixo com nome do cartão
+  const cardName = cardCategory ? cardCategory.name : 'Cartão';
+  const repasseDesc = `${description} ( ${cardName} )`;
+
+  const generatedRevenue = generateTransactionsMultiYear({
+    description: repasseDesc,
+    value,
+    installment,
+    monthIndex,
+    year,
+    categoryId: repasseCategory.id,
+    categoryName: repasseCategory.name,
+    categoryType: repasseCategory.type,
+    isPaid: false,
+    shouldPropagate,
+    isRevenue: true,
+    tag
+  });
+
+  // Vincula cada parcela/ocorrência correspondente por um linkedId único compartilhado
+  const totalPairs = Math.min(generatedExpense.length, generatedRevenue.length);
+  for (let i = 0; i < totalPairs; i++) {
+    const linkToken = 'link_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substring(2, 7);
+    generatedExpense[i].linkedId = linkToken;
+    generatedRevenue[i].linkedId = linkToken;
+  }
+
+  return {
+    expenses: generatedExpense,
+    revenues: generatedRevenue,
+    all: [...generatedExpense, ...generatedRevenue]
+  };
 }
 
 /**
@@ -507,7 +733,7 @@ function deleteTransactionCascade(transactions = [], transactionId, shouldDelete
  * @param {boolean} shouldPropagateToFuture Se true (confirmou), aplica nos meses seguintes do mesmo groupId
  * @returns {{ transactions: Array<Object>, updatedCount: number }}
  */
-function updateTransactionCascade(transactions = [], transactionId, { description, value, installment } = {}, shouldPropagateToFuture = false) {
+function updateTransactionCascade(transactions = [], transactionId, { description, value, installment, tag } = {}, shouldPropagateToFuture = false) {
   const target = transactions.find(t => t.id === transactionId);
   if (!target) {
     return { transactions: [...transactions], updatedCount: 0 };
@@ -532,15 +758,19 @@ function updateTransactionCascade(transactions = [], transactionId, { descriptio
   const targetYear = Number(target.year);
   const targetMonth = Number(target.monthIndex);
   const targetAbsoluteTime = (targetYear * 12) + targetMonth;
-  let updatedCount = 0;
 
-  const updatedTransactions = transactions.map(item => {
-    // Se deve propagar e pertence ao mesmo groupId
-    if (shouldPropagateToFuture && target.groupId && item.groupId === target.groupId) {
+  // 1. Identificar quais itens primários devem ser atualizados e coletar seus linkedIds
+  const primaryIdsToUpdate = new Set();
+  const linkedUpdatesMap = new Map(); // linkedId -> { sourceId, value, tag, newDescription }
+
+  transactions.forEach(item => {
+    let shouldUpdate = false;
+    if (item.id === target.id) {
+      shouldUpdate = true;
+    } else if (shouldPropagateToFuture && target.groupId && item.groupId === target.groupId) {
       const itemYear = Number(item.year);
       const itemMonth = Number(item.monthIndex);
 
-      let shouldUpdate = false;
       if (isFixedOrVariable) {
         // Regra para Contas Fixas e Variáveis: limita estritamente até Dezembro do ano atual
         shouldUpdate = (itemYear === targetYear && itemMonth >= targetMonth && itemMonth <= 11);
@@ -549,27 +779,57 @@ function updateTransactionCascade(transactions = [], transactionId, { descriptio
         const itemAbsoluteTime = (itemYear * 12) + itemMonth;
         shouldUpdate = (itemAbsoluteTime >= targetAbsoluteTime);
       }
-
-      if (shouldUpdate) {
-        updatedCount++;
-        return {
-          ...item,
-          description: description !== undefined ? description : item.description,
-          value: value !== undefined ? Number(value) : item.value,
-          installment: (item.id === target.id && installment !== undefined) ? installment : item.installment
-        };
-      }
     }
 
-    // Se é apenas o item alvo
-    if (item.id === target.id) {
+    if (shouldUpdate) {
+      primaryIdsToUpdate.add(item.id);
+      if (item.linkedId) {
+        linkedUpdatesMap.set(item.linkedId, {
+          sourceId: item.id,
+          value: value !== undefined ? Number(value) : item.value,
+          tag: tag !== undefined ? tag : item.tag,
+          newDescription: description !== undefined ? description : item.description
+        });
+      }
+    }
+  });
+
+  let updatedCount = 0;
+  const updatedTransactions = transactions.map(item => {
+    // Se é item primário alvo ou item futuro do mesmo grupo
+    if (primaryIdsToUpdate.has(item.id)) {
       updatedCount++;
       return {
         ...item,
         description: description !== undefined ? description : item.description,
         value: value !== undefined ? Number(value) : item.value,
-        installment: installment !== undefined ? installment : item.installment
+        installment: (item.id === target.id && installment !== undefined) ? installment : item.installment,
+        tag: tag !== undefined ? tag : item.tag
       };
+    }
+
+    // Se é o par espelho vinculado via linkedId (ex: Repasse vinculado a Cartão ou vice-versa)
+    if (item.linkedId && linkedUpdatesMap.has(item.linkedId)) {
+      const updateData = linkedUpdatesMap.get(item.linkedId);
+      if (item.id !== updateData.sourceId) {
+        updatedCount++;
+        let newDesc = item.description;
+        if (description !== undefined) {
+          // Preserva sufixo identificador caso exista, ex: "( Cartão Sofisa )"
+          const suffixMatch = item.description.match(/\s*\(\s*[^)]+\s*\)$/);
+          if (suffixMatch && updateData.newDescription) {
+            newDesc = `${updateData.newDescription}${suffixMatch[0]}`;
+          } else {
+            newDesc = updateData.newDescription;
+          }
+        }
+        return {
+          ...item,
+          description: newDesc,
+          value: updateData.value,
+          tag: updateData.tag
+        };
+      }
     }
 
     return item;
@@ -677,7 +937,8 @@ const AppState = {
   selectedMonthIndex: mesSelecionado, // 0 a 11 (inicia no próximo mês)
   selectedYear: anoSelecionado,       // ex: 2026/2027 (com rollover de ano)
   editingTransactionId: null,        // id do lançamento em modo de edição
-  selectedTypeFilters: new Set()     // tipos selecionados no Drawer de Filtros
+  selectedTypeFilters: new Set(),    // tipos selecionados no Drawer de Filtros
+  tags: loadTags()                   // lista de tags/classificações
 };
 
 // =============================================================================
@@ -756,9 +1017,23 @@ const DOM = {
   transDescError: document.getElementById('transDescError'),
   transInstallmentError: document.getElementById('transInstallmentError'),
   transValueError: document.getElementById('transValueError'),
+  itemTag: document.getElementById('itemTag'),
+  itemTagError: document.getElementById('itemTagError'),
+  btnManageTags: document.getElementById('btnManageTags'),
+  modalManageTagsOverlay: document.getElementById('modalManageTagsOverlay'),
+  btnCloseManageTags: document.getElementById('btnCloseManageTags'),
+  btnDoneManageTags: document.getElementById('btnDoneManageTags'),
+  formAddTag: document.getElementById('formAddTag'),
+  newTagNameInput: document.getElementById('newTagNameInput'),
+  btnAddTagBtn: document.getElementById('btnAddTagBtn'),
+  newTagError: document.getElementById('newTagError'),
+  manageTagsList: document.getElementById('manageTagsList'),
+  manageTagsEmpty: document.getElementById('manageTagsEmpty'),
   transRepasseGroup: document.getElementById('transRepasseGroup'),
   transRepasseSelect: document.getElementById('transRepasseSelect'),
+  transRepasseError: document.getElementById('transRepasseError'),
   btnAddTransaction: document.getElementById('btnAddTransaction'),
+  btnSubmitTransIcon: document.getElementById('btnSubmitTransIcon'),
   btnSubmitTransText: document.getElementById('btnSubmitTransText'),
   btnCancelEdit: document.getElementById('btnCancelEdit'),
   transactionTable: document.getElementById('transactionTable'),
@@ -1644,7 +1919,8 @@ function exportBackup() {
     dataExportacao: new Date().toISOString(),
     lastUpdated: AppState.lastUpdated || Date.now(),
     categorias: AppState.categories,
-    lancamentos: AppState.transactions
+    lancamentos: AppState.transactions,
+    tags: AppState.tags
   };
 
   const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
@@ -1672,6 +1948,7 @@ function importBackup(e) {
       const parsed = JSON.parse(event.target.result);
       const incomingCats = parsed.categorias || parsed.categories || [];
       const incomingTrans = parsed.lancamentos || parsed.transactions || [];
+      const incomingTags = parsed.tags || parsed.finance_tags || [];
 
       if (!Array.isArray(incomingCats)) {
         showToast('Arquivo de backup inválido.', 'error');
@@ -1680,6 +1957,11 @@ function importBackup(e) {
 
       AppState.categories = incomingCats.map((c, i) => normalizeCategory(c, i));
       AppState.transactions = incomingTrans.map((t, i) => normalizeTransaction(t, i));
+      if (Array.isArray(incomingTags) && incomingTags.length > 0) {
+        AppState.tags = incomingTags.map(t => String(t).trim()).filter(Boolean);
+        saveTags(AppState.tags, true);
+        renderTagSelectOptions();
+      }
 
       if (parsed.lastUpdated) {
         saveCategories(AppState.categories, true);
@@ -1728,16 +2010,21 @@ function clearAllLocalData() {
     // Remove do localStorage apenas as chaves específicas do sistema
     localStorage.removeItem(STORAGE_KEYS.CATEGORIES);
     localStorage.removeItem(STORAGE_KEYS.TRANSACTIONS);
+    localStorage.removeItem(STORAGE_KEYS.TAGS);
+    localStorage.removeItem('financas_tags');
     localStorage.removeItem(STORAGE_KEYS.LAST_UPDATED);
 
     // Remove também do sessionStorage de fallback
     sessionStorage.removeItem(STORAGE_KEYS.CATEGORIES);
     sessionStorage.removeItem(STORAGE_KEYS.TRANSACTIONS);
+    sessionStorage.removeItem(STORAGE_KEYS.TAGS);
+    sessionStorage.removeItem('financas_tags');
     sessionStorage.removeItem(STORAGE_KEYS.LAST_UPDATED);
 
     // Esvazia os arrays de estado em memória
     AppState.categories = [];
     AppState.transactions = [];
+    AppState.tags = [];
     AppState.lastUpdated = 0;
 
     showToast('Dados apagados com sucesso. O sistema será reiniciado.', 'success');
@@ -1851,7 +2138,8 @@ async function syncToCloud() {
     const payload = {
       lastUpdated: uploadTs,
       categorias: AppState.categories,
-      lancamentos: AppState.transactions
+      lancamentos: AppState.transactions,
+      tags: AppState.tags || []
     };
 
     if (!binId) {
@@ -1969,6 +2257,7 @@ async function syncFromCloud() {
 
     const incomingCats = record.categorias || record.categories || [];
     const incomingTrans = record.lancamentos || record.transactions || [];
+    const incomingTags = record.tags || record.finance_tags || [];
 
     if (!Array.isArray(incomingCats)) {
       throw new Error('A estrutura dos dados na nuvem é inválida (categorias ausentes ou formato incorreto).');
@@ -1991,6 +2280,14 @@ async function syncFromCloud() {
 
     AppState.categories = incomingCats.map((c, i) => normalizeCategory(c, i));
     AppState.transactions = incomingTrans.map((t, i) => normalizeTransaction(t, i));
+    if (Array.isArray(incomingTags)) {
+      AppState.tags = incomingTags.map(t => String(t).trim()).filter(Boolean);
+      saveTags(AppState.tags, true);
+      renderTagSelectOptions();
+      if (typeof renderManageTagsList === 'function') {
+        renderManageTagsList();
+      }
+    }
 
     saveCategories(AppState.categories, true);
     saveTransactions(AppState.transactions, true);
@@ -2124,7 +2421,8 @@ async function executeAutoCloudSync() {
     const payload = {
       lastUpdated: uploadTs,
       categorias: AppState.categories,
-      lancamentos: AppState.transactions
+      lancamentos: AppState.transactions,
+      tags: AppState.tags || []
     };
 
     const response = await fetch(`https://api.jsonbin.io/v3/b/${encodeURIComponent(binId)}`, {
@@ -2177,6 +2475,9 @@ function triggerCloudSync() {
 // =============================================================================
 
 function setActiveMonth(monthIndex) {
+  if (AppState.editingTransactionId) {
+    cancelEditingTransaction();
+  }
   AppState.selectedMonthIndex = Number(monthIndex);
 
   // Sincroniza abas na tela de categoria
@@ -2210,6 +2511,9 @@ function setActiveMonth(monthIndex) {
 }
 
 function setupCategoryDetailView(category) {
+  // Garante que qualquer edição em andamento seja cancelada ao alternar de categoria
+  cancelEditingTransaction();
+
   const typeConfig = CATEGORY_TYPES.find(t => t.id === category.type) || { badgeClass: 'badge-variavel' };
   
   DOM.catHeaderName.textContent = category.name;
@@ -2222,6 +2526,9 @@ function setupCategoryDetailView(category) {
 
   // Campo Condicional: Vincular a Repasse (apenas para Cartão de Crédito)
   updateTransRepasseVisibility(category);
+
+  // Popula e reseta o select de Classificações/Tags
+  renderTagSelectOptions();
 
   setActiveMonth(AppState.selectedMonthIndex);
 
@@ -2289,9 +2596,17 @@ function startEditingTransaction(id) {
   DOM.transInstallmentInput.value = (t.installment && t.installment !== '-') ? t.installment : '';
   DOM.transValueInput.value = formatCurrency(Number(t.value));
 
-  // Altera texto do botão e exibe botão Cancelar
+  if (DOM.itemTag) {
+    renderTagSelectOptions(t.tag || '');
+    DOM.itemTag.value = t.tag || '';
+  }
+
+  // Altera texto e ícone do botão e exibe botão Cancelar
   if (DOM.btnSubmitTransText) {
-    DOM.btnSubmitTransText.textContent = 'Salvar Alteração';
+    DOM.btnSubmitTransText.textContent = 'Salvar';
+  }
+  if (DOM.btnSubmitTransIcon) {
+    DOM.btnSubmitTransIcon.innerHTML = '<polyline points="20 6 9 17 4 12"></polyline>';
   }
   if (DOM.btnCancelEdit) {
     DOM.btnCancelEdit.style.display = 'inline-flex';
@@ -2305,6 +2620,18 @@ function startEditingTransaction(id) {
     DOM.transRepasseGroup.style.display = 'none';
   }
 
+  // Ativa layout específico de edição na grid do formulário
+  DOM.transactionForm?.classList.add('edit-mode');
+
+  // Destaca a linha correspondente na tabela
+  if (DOM.transactionTableBody) {
+    DOM.transactionTableBody.querySelectorAll('tr').forEach(row => {
+      row.classList.remove('row-editing');
+    });
+    const targetRow = DOM.transactionTableBody.querySelector(`[data-edit-id="${t.id}"]`)?.closest('tr');
+    if (targetRow) targetRow.classList.add('row-editing');
+  }
+
   showToast(`Editando "${t.description}"...`);
 }
 
@@ -2314,12 +2641,22 @@ function startEditingTransaction(id) {
 function cancelEditingTransaction() {
   AppState.editingTransactionId = null;
 
+  // Remove classe de edição restaurando layout normal
+  DOM.transactionForm?.classList.remove('edit-mode');
+
   if (DOM.transDescriptionInput) DOM.transDescriptionInput.value = '';
   if (DOM.transInstallmentInput) DOM.transInstallmentInput.value = '';
   if (DOM.transValueInput) DOM.transValueInput.value = '';
+  if (DOM.itemTag) {
+    DOM.itemTag.value = '';
+    DOM.itemTag.style.borderColor = '';
+  }
 
   if (DOM.btnSubmitTransText) {
     DOM.btnSubmitTransText.textContent = 'Adicionar Lançamento';
+  }
+  if (DOM.btnSubmitTransIcon) {
+    DOM.btnSubmitTransIcon.innerHTML = '<line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>';
   }
   if (DOM.btnCancelEdit) {
     DOM.btnCancelEdit.style.display = 'none';
@@ -2328,9 +2665,22 @@ function cancelEditingTransaction() {
   if (DOM.transDescError) DOM.transDescError.textContent = '';
   if (DOM.transInstallmentError) DOM.transInstallmentError.textContent = '';
   if (DOM.transValueError) DOM.transValueError.textContent = '';
+  if (DOM.itemTagError) DOM.itemTagError.textContent = '';
+  if (DOM.transRepasseError) DOM.transRepasseError.textContent = '';
   if (DOM.transDescriptionInput) DOM.transDescriptionInput.style.borderColor = '';
   if (DOM.transInstallmentInput) DOM.transInstallmentInput.style.borderColor = '';
   if (DOM.transValueInput) DOM.transValueInput.style.borderColor = '';
+  if (DOM.transRepasseSelect) DOM.transRepasseSelect.style.borderColor = '';
+
+  // Remove destaque visual de qualquer linha em edição na tabela
+  if (DOM.transactionTableBody) {
+    DOM.transactionTableBody.querySelectorAll('.row-editing').forEach(row => {
+      row.classList.remove('row-editing');
+    });
+  }
+
+  // Restaura o select de tags para as tags ativas do AppState
+  renderTagSelectOptions('');
 
   const activeCategory = AppState.categories.find(c => c.id === AppState.activeCategoryId);
   updateTransRepasseVisibility(activeCategory);
@@ -2433,6 +2783,8 @@ function renderTransactionsTable() {
          </td>`
       : `<td class="val-cell${creditClass}"><strong>${formatCurrency(t.value)}</strong></td>`;
 
+    const tagHtml = t.tag ? ` <span class="badge-tag">${escapeHTML(t.tag)}</span>` : '';
+
     tr.innerHTML = `
       <td style="text-align: center;">
         <input 
@@ -2446,7 +2798,7 @@ function renderTransactionsTable() {
       <td class="installment-cell">
         <span class="badge-installment">${escapeHTML(t.installment || '-')}</span>
       </td>
-      <td class="desc-cell">${escapeHTML(t.description)}</td>
+      <td class="desc-cell">${escapeHTML(t.description)}${tagHtml}</td>
       ${valueCellHtml}
       <td class="text-right actions-cell">
         <button class="btn-edit" data-edit-id="${escapeHTML(t.id)}" aria-label="Editar lançamento" title="Editar lançamento">
@@ -2490,17 +2842,13 @@ function renderTransactionsTable() {
                 "Deseja aplicar essa alteração (Valor) também para os meses seguintes?"
               );
             }
-            if (propagateInline) {
-              const res = updateTransactionCascade(
-                AppState.transactions,
-                t.id,
-                { description: t.description, value: newVal, installment: t.installment },
-                true
-              );
-              AppState.transactions = res.transactions;
-            } else {
-              t.value = newVal;
-            }
+            const res = updateTransactionCascade(
+              AppState.transactions,
+              t.id,
+              { description: t.description, value: newVal, installment: t.installment, tag: t.tag },
+              propagateInline
+            );
+            AppState.transactions = res.transactions;
             saveTransactions(AppState.transactions);
             triggerCloudSync();
             renderTransactionsTable();
@@ -2611,6 +2959,9 @@ function handleTransactionSubmit(e) {
 
   if (hasError) return;
 
+  const rawTagVal = DOM.itemTag ? DOM.itemTag.value.trim() : '';
+  const tagToSave = (rawTagVal === 'new') ? '' : rawTagVal;
+
   // ===========================================================================
   // MODO DE EDIÇÃO: Salva alterações no lançamento existente
   // ===========================================================================
@@ -2624,14 +2975,14 @@ function handleTransactionSubmit(e) {
 
       if (hasGroupId) {
         propagateToFuture = window.confirm(
-          "Deseja aplicar essa alteração (Valor/Descrição) também para os meses seguintes?"
+          "Deseja aplicar essa alteração (Valor/Descrição/Classificação) também para os meses seguintes?"
         );
       }
 
       const result = updateTransactionCascade(
         AppState.transactions,
         AppState.editingTransactionId,
-        { description: descVal, value: valNum, installment: installmentRaw || '-' },
+        { description: descVal, value: valNum, installment: installmentRaw || '-', tag: tagToSave },
         propagateToFuture
       );
 
@@ -2673,57 +3024,29 @@ function handleTransactionSubmit(e) {
     const repasseTargetId = (isCreditCard && DOM.transRepasseSelect) ? DOM.transRepasseSelect.value : '';
     const repasseCategory = repasseTargetId ? AppState.categories.find(c => c.id === repasseTargetId) : null;
 
-    // Registo 1: A Despesa no Cartão de Crédito
-    const generatedExpense = generateTransactionsMultiYear({
+    const pairResult = createExpenseWithRepasseMirror({
       description: descVal,
       value: valNum,
       installment: installmentRaw,
       monthIndex: currentMonth,
       year: currentYear,
-      categoryId: activeCategory.id,
-      categoryName: activeCategory.name,
-      categoryType: activeCategory.type,
-      isPaid: false,
-      shouldPropagate: propagar
+      cardCategory: activeCategory,
+      repasseCategory: repasseCategory,
+      shouldPropagate: propagar,
+      tag: tagToSave
     });
 
-    let generatedRevenue = [];
-    if (repasseCategory) {
-      // Registo 2: A Receita vinculada ao Repasse
-      // 4. Rastreabilidade Visual: Concatena o nome do Cartão à descrição
-      const repasseDesc = `${descVal} ( ${activeCategory.name} )`;
+    const generatedExpense = pairResult.expenses;
+    const generatedRevenue = pairResult.revenues;
 
-      generatedRevenue = generateTransactionsMultiYear({
-        description: repasseDesc,
-        value: valNum,
-        installment: installmentRaw,
-        monthIndex: currentMonth,
-        year: currentYear,
-        categoryId: repasseCategory.id,
-        categoryName: repasseCategory.name,
-        categoryType: repasseCategory.type,
-        isPaid: false,
-        shouldPropagate: propagar,
-        isRevenue: true
-      });
-
-      // Vincula cada parcela/ocorrência correspondente por um linkedId único compartilhado
-      const totalPairs = Math.min(generatedExpense.length, generatedRevenue.length);
-      for (let i = 0; i < totalPairs; i++) {
-        const linkToken = 'link_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substring(2, 7);
-        generatedExpense[i].linkedId = linkToken;
-        generatedRevenue[i].linkedId = linkToken;
-      }
-    }
-
-    const allNewTransactions = [...generatedExpense, ...generatedRevenue];
-    AppState.transactions.push(...allNewTransactions);
+    AppState.transactions.push(...pairResult.all);
     saveTransactions(AppState.transactions);
     triggerCloudSync();
 
     DOM.transDescriptionInput.value = '';
     DOM.transInstallmentInput.value = '';
     DOM.transValueInput.value = '';
+    if (DOM.itemTag) DOM.itemTag.value = '';
     if (DOM.transRepasseSelect) DOM.transRepasseSelect.value = '';
     DOM.transDescriptionInput.focus();
 
@@ -2890,14 +3213,51 @@ function setupEventListeners() {
     handleCurrencyInput(e);
   });
 
+  // Gerenciamento de Classificações (Modal)
+  if (DOM.btnManageTags) {
+    DOM.btnManageTags.addEventListener('click', openManageTagsModal);
+  }
+  if (DOM.btnCloseManageTags) {
+    DOM.btnCloseManageTags.addEventListener('click', closeManageTagsModal);
+  }
+  if (DOM.btnDoneManageTags) {
+    DOM.btnDoneManageTags.addEventListener('click', closeManageTagsModal);
+  }
+  if (DOM.modalManageTagsOverlay) {
+    DOM.modalManageTagsOverlay.addEventListener('click', (e) => {
+      if (e.target === DOM.modalManageTagsOverlay) {
+        closeManageTagsModal();
+      }
+    });
+  }
+  if (DOM.btnAddTagBtn) {
+    DOM.btnAddTagBtn.addEventListener('click', addTagFromModal);
+  }
+  if (DOM.newTagNameInput) {
+    DOM.newTagNameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addTagFromModal();
+      }
+    });
+    DOM.newTagNameInput.addEventListener('input', () => {
+      if (DOM.newTagError) DOM.newTagError.textContent = '';
+      DOM.newTagNameInput.style.borderColor = '';
+    });
+  }
+
   // Botão Zona de Perigo - Apagar Todos os Dados
   if (DOM.btnClearAllData) {
     DOM.btnClearAllData.addEventListener('click', clearAllLocalData);
   }
 
-  // Usabilidade de Teclado: Tecla ESC global para fechar formulários, cancelar edição e fechar menus
+  // Usabilidade de Teclado: Tecla ESC global para fechar modais, formulários, cancelar edição e fechar menus
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (DOM.modalManageTagsOverlay && DOM.modalManageTagsOverlay.classList.contains('active')) {
+        closeManageTagsModal();
+        return;
+      }
       cancelEditingTransaction();
       resetAllForms();
       closeMobileSidebar();
@@ -2912,6 +3272,7 @@ function setupEventListeners() {
     if (isResettingData) return;
     StorageEngine.set(STORAGE_KEYS.CATEGORIES, AppState.categories);
     StorageEngine.set(STORAGE_KEYS.TRANSACTIONS, AppState.transactions);
+    StorageEngine.set(STORAGE_KEYS.TAGS, AppState.tags);
   });
 }
 
@@ -2920,6 +3281,7 @@ function init() {
 
   updateYearDisplay();
   loadCloudCredentials();
+  renderTagSelectOptions();
 
   if (DOM.storageStatusBadge) {
     if (StorageEngine.isAvailable) {
@@ -2936,6 +3298,7 @@ function init() {
 
 window.Financas = {
   STORAGE_KEYS,
+  DEFAULT_TAGS,
   CATEGORY_TYPES,
   MONTH_NAMES,
   MONTH_SHORT,
@@ -2947,7 +3310,16 @@ window.Financas = {
   saveCategories,
   loadTransactions,
   saveTransactions,
+  loadTags,
+  saveTags,
+  renderTagSelectOptions,
+  openManageTagsModal,
+  closeManageTagsModal,
+  addTagFromModal,
+  deleteTagFromModal,
+  renderManageTagsList,
   generateTransactionsMultiYear,
+  createExpenseWithRepasseMirror,
   deleteTransactionCascade,
   updateTransactionCascade,
   calculateTotalsByMonthAndYear,
