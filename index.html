@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistema Financeiro - SPA</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar Fixa Lateral Esquerda -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+          </svg>
+        </div>
+        <span class="brand-title">Finanças</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <!-- Links Fixos no Topo -->
+        <div class="nav-section">
+          <span class="nav-section-title">Menu Principal</span>
+          <ul class="nav-list">
+            <li>
+              <button class="nav-link active" data-route="dashboard">
+                <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect width="7" height="9" x="3" y="3" rx="1"/>
+                  <rect width="7" height="5" x="14" y="3" rx="1"/>
+                  <rect width="7" height="9" x="14" y="12" rx="1"/>
+                  <rect width="7" height="5" x="3" y="16" rx="1"/>
+                </svg>
+                <span>Dashboard</span>
+              </button>
+            </li>
+            <li>
+              <button class="nav-link" data-route="configuracoes">
+                <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+                <span>Configurações</span>
+              </button>
+            </li>
+          </ul>
+        </div>
+
+        <div class="nav-divider"></div>
+
+        <!-- Grupos Visuais de Categorias Dinâmicas -->
+        <div class="dynamic-category-sections" id="dynamicCategorySections">
+          <!-- Grupos e links renderizados dinamicamente via JS -->
+        </div>
+      </nav>
+    </aside>
+
+    <!-- Overlay da Sidebar Mobile -->
+    <div id="sidebarOverlay"></div>
+
+    <!-- Área Principal à Direita -->
+    <div class="main-wrapper">
+      <!-- Cabeçalho Simples no Topo -->
+      <header class="app-header">
+        <div class="header-left">
+          <button id="btnMenuToggle" class="menu-mobile" aria-label="Abrir menu">☰</button>
+          <h1 class="header-title" id="headerTitle">Dashboard</h1>
+        </div>
+        <div class="header-right">
+          <!-- Indicador de Status da Nuvem -->
+          <span id="cloudStatus" class="status-indicator">☁️ Nuvem Atualizada</span>
+
+          <!-- Seletor de Ano -->
+          <div class="year-selector" id="yearSelector">
+            <button type="button" class="btn-year-nav" id="btnPrevYear" aria-label="Ano anterior" title="Ano anterior">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="15 18 9 12 15 6"></polyline>
+              </svg>
+            </button>
+            <span class="year-display" id="yearDisplay">2026</span>
+            <button type="button" class="btn-year-nav" id="btnNextYear" aria-label="Próximo ano" title="Próximo ano">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Conteúdo da Área Principal -->
+      <main class="app-main" id="appMain">
+        <!-- Tela 1: Dashboard (Padrão ao carregar) -->
+        <section class="screen-view active" id="viewDashboard">
+          <div class="dashboard-header-intro">
+            <h2>Visão Geral</h2>
+            <p id="dashMonthLabel">Resumo financeiro e categorias ativas</p>
+          </div>
+
+          <!-- Métricas Resumo -->
+          <div class="metrics-grid" id="dashboardMetrics">
+            <!-- Cards de métricas gerados via JS -->
+          </div>
+
+          <!-- Barra de Abas Horizontais dos 12 Meses no Dashboard -->
+          <nav class="month-tabs-bar" id="dashMonthTabsBar" aria-label="Navegação por mês no Dashboard">
+            <button type="button" class="month-tab" data-month="0">Jan</button>
+            <button type="button" class="month-tab" data-month="1">Fev</button>
+            <button type="button" class="month-tab" data-month="2">Mar</button>
+            <button type="button" class="month-tab" data-month="3">Abr</button>
+            <button type="button" class="month-tab" data-month="4">Mai</button>
+            <button type="button" class="month-tab" data-month="5">Jun</button>
+            <button type="button" class="month-tab" data-month="6">Jul</button>
+            <button type="button" class="month-tab" data-month="7">Ago</button>
+            <button type="button" class="month-tab" data-month="8">Set</button>
+            <button type="button" class="month-tab" data-month="9">Out</button>
+            <button type="button" class="month-tab" data-month="10">Nov</button>
+            <button type="button" class="month-tab" data-month="11">Dez</button>
+          </nav>
+
+          <!-- Seção de Planilha Financeira do Dashboard (Tabelas Agrupadas por Tipo) -->
+          <div class="dashboard-sheets-wrapper" id="dashboardSheetsWrapper">
+            <div class="sheet-section-header">
+              <div class="sheet-section-title-wrap">
+                <h3 class="sheet-section-title">Detalhamento por Categorias</h3>
+                <p class="sheet-section-subtitle" id="dashCategoryCount">Visão consolidada em formato de planilha</p>
+              </div>
+              <div class="sheet-header-actions">
+                <button type="button" id="btnAbrirFiltros" class="btn btn-secondary btn-secundario" style="padding: 8px 16px; height: 38px; font-size: 0.85rem; white-space: nowrap;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                  </svg>
+                  <span>Filtros</span>
+                </button>
+                <button class="btn btn-primary" id="btnGoToConfig" style="padding: 8px 14px; height: 38px; font-size: 0.82rem; white-space: nowrap;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 5v14M5 12h14"/>
+                  </svg>
+                  <span>Nova Categoria</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Tabelas por Tipo empilhadas verticalmente -->
+            <div class="sheet-tables-stack" id="dashboardTablesContainer">
+              <!-- Preenchido via renderDashboardTables() -->
+            </div>
+          </div>
+        </section>
+
+        <!-- Tela 2: Configurações (Gerenciamento de Categorias) -->
+        <section class="screen-view" id="viewConfiguracoes">
+          <!-- Formulário de Cadastro de Categoria -->
+          <div class="card form-card">
+            <div class="card-header">
+              <div class="card-header-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 5v14M5 12h14"/>
+                </svg>
+              </div>
+              <div>
+                <h2 class="card-title">Cadastrar Categoria</h2>
+                <p class="card-subtitle">Cadastre dinamicamente as categorias que estruturam o seu fluxo financeiro</p>
+              </div>
+            </div>
+
+            <form id="categoryForm" class="category-form" novalidate>
+              <div class="form-row">
+                <div class="form-group flex-2">
+                  <label for="categoryName">Nome da Categoria</label>
+                  <input 
+                    type="text" 
+                    id="categoryName" 
+                    class="form-control" 
+                    placeholder="Ex: Nubank, Salário, Mercado..." 
+                    required 
+                    autocomplete="off"
+                  />
+                  <span class="form-error" id="nameError"></span>
+                </div>
+
+                <div class="form-group flex-2">
+                  <label for="categoryType">Tipo</label>
+                  <select id="categoryType" class="form-control" required>
+                    <option value="" disabled selected>Selecione um tipo...</option>
+                    <option value="Receita">Receita</option>
+                    <option value="Cartão de Crédito">Cartão de Crédito</option>
+                    <option value="Conta Fixa">Conta Fixa</option>
+                    <option value="Variável Prevista">Variável Prevista</option>
+                    <option value="Repasse">Repasse</option>
+                  </select>
+                  <span class="form-error" id="typeError"></span>
+                </div>
+
+                <div class="form-group flex-1 form-actions">
+                  <button type="submit" class="btn btn-primary" id="btnAddCategory">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="12" y1="5" x2="12" y2="19"></line>
+                      <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    <span>Adicionar</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+
+          <!-- Listagem de Categorias (Abaixo do formulário) -->
+          <div class="card table-card">
+            <div class="card-header card-header-flex">
+              <div>
+                <h2 class="card-title">Categorias Criadas</h2>
+                <p class="card-subtitle" id="categoryCountLabel">Nenhuma categoria cadastrada</p>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Nome</th>
+                    <th>Tipo</th>
+                    <th class="text-right">Ação</th>
+                  </tr>
+                </thead>
+                <tbody id="categoryTableBody">
+                  <!-- Linhas geradas dinamicamente via JS -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Estado Vazio quando não houver categorias -->
+            <div class="empty-state" id="emptyState">
+              <div class="empty-icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M20 7h-7L10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2z"/>
+                </svg>
+              </div>
+              <p class="empty-title">Nenhuma categoria criada</p>
+              <p class="empty-desc">Utilize o formulário acima para adicionar categorias ao sistema.</p>
+            </div>
+          </div>
+
+          <!-- Segurança e Backup dos Dados -->
+          <div class="card backup-card">
+            <div class="card-header card-header-flex">
+              <div>
+                <h3 class="card-title">Segurança & Backup dos Dados</h3>
+                <p class="card-subtitle">Seus dados ficam 100% salvos no navegador. Exporte um backup para garantia total.</p>
+              </div>
+              <div class="storage-badge-status" id="storageStatusBadge">
+                <span class="status-dot"></span>
+                <span>Storage Ativo</span>
+              </div>
+            </div>
+            <div class="backup-actions-row">
+              <div class="backup-action-item">
+                <button type="button" class="btn btn-secondary" id="btnExportBackup">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                  </svg>
+                  <span>Baixar Backup (JSON)</span>
+                </button>
+                <p class="backup-hint">Gera um arquivo de segurança no seu computador com todas as categorias e lançamentos.</p>
+              </div>
+
+              <div class="backup-action-item">
+                <label for="importBackupInput" class="btn btn-secondary btn-file-label">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                  </svg>
+                  <span>Restaurar Backup (JSON)</span>
+                </label>
+                <input type="file" id="importBackupInput" accept=".json" style="display: none;">
+                <p class="backup-hint">Carrega dados previamente salvos a partir de um arquivo JSON.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sincronização na Nuvem (JSONBin) -->
+          <div class="card backup-card cloud-sync-card">
+            <div class="card-header card-header-flex">
+              <div>
+                <h3 class="card-title">Sincronização na Nuvem (JSONBin)</h3>
+                <p class="card-subtitle">Faça backup e sincronize os seus dados financeiros utilizando a API REST do JSONBin.io</p>
+              </div>
+              <div class="storage-badge-status" id="cloudStatusBadge" style="background-color: rgba(99, 102, 241, 0.1); border-color: rgba(99, 102, 241, 0.3); color: var(--primary);">
+                <span class="status-dot" style="background: var(--primary);"></span>
+                <span>API REST</span>
+              </div>
+            </div>
+
+            <div class="cloud-form">
+              <div class="form-row">
+                <div class="form-group flex-2">
+                  <label for="jsonbinApiKey">API Key (X-Master-Key)</label>
+                  <input 
+                    type="password" 
+                    id="jsonbinApiKey" 
+                    class="form-control" 
+                    placeholder="Cole aqui a sua X-Master-Key do JSONBin..." 
+                    autocomplete="off"
+                  />
+                  <p class="backup-hint" style="margin-top: 4px;">Chave mestre obtida na sua conta JSONBin.io.</p>
+                </div>
+                <div class="form-group flex-2">
+                  <label for="jsonbinBinId">Bin ID (Opcional na primeira vez)</label>
+                  <input 
+                    type="text" 
+                    id="jsonbinBinId" 
+                    class="form-control" 
+                    placeholder="Gerado automaticamente ou cole um Bin ID existente..." 
+                    autocomplete="off"
+                  />
+                  <p class="backup-hint" style="margin-top: 4px;">Identificador do Bin. Deixe vazio para criar um novo no primeiro envio.</p>
+                </div>
+              </div>
+
+              <div class="cloud-sync-info">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity: 0.7; flex-shrink: 0;">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+                <span id="cloudLastUpdatedText">Última modificação local: Nunca</span>
+              </div>
+
+              <div class="cloud-actions-row">
+                <button type="button" class="btn btn-secondary" id="btnSaveCloudCreds">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                    <polyline points="7 3 7 8 15 8"></polyline>
+                  </svg>
+                  <span>Guardar Credenciais</span>
+                </button>
+
+                <button type="button" class="btn btn-primary" id="btnSyncToCloud">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="16 16 12 12 8 16"></polyline>
+                    <line x1="12" y1="12" x2="12" y2="21"></line>
+                    <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path>
+                  </svg>
+                  <span>Enviar para a Nuvem</span>
+                </button>
+
+                <button type="button" class="btn btn-secondary" id="btnSyncFromCloud">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="8 17 12 21 16 17"></polyline>
+                    <line x1="12" y1="12" x2="12" y2="21"></line>
+                    <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path>
+                  </svg>
+                  <span>Restaurar da Nuvem</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Zona de Perigo (Danger Zone) -->
+          <div class="card danger-zone-card">
+            <div class="card-header card-header-flex">
+              <div>
+                <h3 class="card-title text-danger">Zona de Perigo</h3>
+                <p class="card-subtitle">Ações críticas e irreversíveis de gerenciamento de dados locais.</p>
+              </div>
+              <div class="danger-badge-status">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                  <line x1="12" y1="9" x2="12" y2="13"></line>
+                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <span>Atenção</span>
+              </div>
+            </div>
+            <div class="danger-zone-content">
+              <button type="button" class="btn btn-danger" id="btnClearAllData">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  <line x1="10" y1="11" x2="10" y2="17"></line>
+                  <line x1="14" y1="11" x2="14" y2="17"></line>
+                </svg>
+                <span>Apagar Todos os Dados</span>
+              </button>
+              <p class="danger-hint">Atenção: Esta ação apagará todas as categorias e lançamentos do seu navegador. Não afetará o backup na nuvem.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tela 3: Tela da Categoria (UI e CRUD de Lançamentos) -->
+        <section class="screen-view" id="viewCategoryDetail">
+          <!-- Cabeçalho da Categoria -->
+          <div class="card category-header-card">
+            <div class="cat-header-content">
+              <div class="cat-header-info">
+                <span class="badge" id="catHeaderBadge">Tipo</span>
+                <h2 class="cat-title-text" id="catHeaderName">Nome da Categoria</h2>
+              </div>
+            </div>
+          </div>
+
+          <!-- Formulário de Lançamento -->
+          <div class="card form-card">
+            <div class="card-header">
+              <div class="card-header-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+              </div>
+              <div>
+                <h3 class="card-title">Novo Lançamento</h3>
+                <p class="card-subtitle">Cadastre despesas ou receitas para o mês selecionado</p>
+              </div>
+            </div>
+
+            <form id="transactionForm" class="transaction-form" novalidate>
+              <div class="form-row">
+                <div class="form-group flex-3">
+                  <label for="transDescription">Descrição</label>
+                  <input 
+                    type="text" 
+                    id="transDescription" 
+                    class="form-control" 
+                    placeholder="Ex: Compra Mercado, Mensalidade..." 
+                    required 
+                    autocomplete="off"
+                  />
+                  <span class="form-error" id="transDescError"></span>
+                </div>
+
+                <div class="form-group flex-1">
+                  <label for="transInstallment">Parcela</label>
+                  <input 
+                    type="text" 
+                    id="transInstallment" 
+                    class="form-control" 
+                    placeholder="ex: 1/5 ou -" 
+                    autocomplete="off"
+                  />
+                  <span class="form-error" id="transInstallmentError"></span>
+                </div>
+
+                <div class="form-group flex-2">
+                  <label for="transValue">Valor (R$)</label>
+                  <input 
+                    type="text" 
+                    inputmode="numeric" 
+                    id="transValue" 
+                    class="form-control" 
+                    placeholder="Ex: R$ 150,00 ou -R$ 50,00" 
+                    required
+                  />
+                  <span class="form-error" id="transValueError"></span>
+                </div>
+
+                <div class="form-group flex-2 form-actions" style="display: flex; gap: 8px; flex-direction: row; align-items: flex-end;">
+                  <button type="submit" class="btn btn-primary" id="btnAddTransaction">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="btnSubmitTransIcon">
+                      <line x1="12" y1="5" x2="12" y2="19"></line>
+                      <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    <span id="btnSubmitTransText">Adicionar Lançamento</span>
+                  </button>
+                  <button type="button" class="btn btn-secondary" id="btnCancelEdit" style="display: none;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                    <span>Cancelar Edição</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+
+          <!-- Barra de Abas Horizontais dos 12 Meses -->
+          <nav class="month-tabs-bar" id="monthTabsBar" aria-label="Navegação por mês">
+            <button type="button" class="month-tab" data-month="0">Jan</button>
+            <button type="button" class="month-tab" data-month="1">Fev</button>
+            <button type="button" class="month-tab" data-month="2">Mar</button>
+            <button type="button" class="month-tab" data-month="3">Abr</button>
+            <button type="button" class="month-tab" data-month="4">Mai</button>
+            <button type="button" class="month-tab" data-month="5">Jun</button>
+            <button type="button" class="month-tab" data-month="6">Jul</button>
+            <button type="button" class="month-tab" data-month="7">Ago</button>
+            <button type="button" class="month-tab" data-month="8">Set</button>
+            <button type="button" class="month-tab" data-month="9">Out</button>
+            <button type="button" class="month-tab" data-month="10">Nov</button>
+            <button type="button" class="month-tab" data-month="11">Dez</button>
+          </nav>
+
+          <!-- Tabela de Lançamentos do Mês -->
+          <div class="card table-card">
+            <div class="card-header card-header-flex">
+              <div>
+                <h3 class="card-title">Lançamentos do Mês</h3>
+                <p class="card-subtitle" id="transCountLabel">0 lançamentos</p>
+              </div>
+              <div class="card-header-actions">
+                <select id="filtroTipoCompra" class="filtro-select" aria-label="Filtrar por tipo de compra">
+                  <option value="todos" selected>Todos os Lançamentos</option>
+                  <option value="unicas">Apenas Compras Únicas</option>
+                  <option value="parceladas">Apenas Parceladas</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table" id="transactionTable">
+                <thead>
+                  <tr>
+                    <th style="width: 80px; text-align: center;">Status</th>
+                    <th style="width: 110px;">Parcela</th>
+                    <th>Descrição</th>
+                    <th style="width: 150px;">Valor</th>
+                    <th class="text-right" style="width: 160px;">Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="transactionTableBody">
+                  <!-- Preenchido dinamicamente via JS -->
+                </tbody>
+                <tfoot id="transactionTableFoot">
+                  <tr class="table-total-row">
+                    <td colspan="3" class="text-right"><strong>Total do Mês:</strong></td>
+                    <td colspan="2"><strong class="total-value-display" id="transTotalValue">R$ 0,00</strong></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <!-- Estado Vazio para lançamentos -->
+            <div class="empty-state" id="emptyTransState">
+              <div class="empty-icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+              </div>
+              <p class="empty-title">Nenhum lançamento neste mês</p>
+              <p class="empty-desc">Adicione um lançamento no formulário acima para esta categoria.</p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- Menu Lateral (Drawer/Off-canvas) de Filtros Avançados -->
+  <div id="overlayFiltros" class="overlay-filtros"></div>
+
+  <aside id="drawerFiltros" class="drawer-filtros" aria-label="Menu de Filtros">
+    <div class="drawer-header">
+      <div class="drawer-title-wrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+        </svg>
+        <h3 class="drawer-title">FILTROS</h3>
+      </div>
+      <button type="button" class="drawer-btn-close" id="btnFecharFiltros" aria-label="Fechar menu de filtros" title="Fechar">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+
+    <div class="drawer-body">
+      <div class="drawer-filter-group">
+        <h4 class="drawer-group-title">TIPO DE CATEGORIA</h4>
+        <div class="drawer-checkbox-list" id="drawerTiposList">
+          <!-- Checkboxes gerados dinamicamente via JS -->
+        </div>
+      </div>
+    </div>
+
+    <div class="drawer-footer">
+      <button type="button" class="btn btn-secondary" id="btnLimparFiltros">Limpar Filtros</button>
+      <button type="button" class="btn btn-primary" id="btnConcluidoFiltros">Concluído</button>
+    </div>
+  </aside>
+
+  <!-- Notificações Toast de Salvamento -->
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+  <!-- Suíte de Testes Unitários (execute runTests() no DevTools Console) -->
+  <script src="app.test.js"></script>
+</body>
+</html>

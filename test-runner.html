@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Runner - FinançasPro SPA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #111827;
+      --card-border: #1f293d;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --success: #10b981;
+      --success-bg: rgba(16, 185, 129, 0.1);
+      --danger: #ef4444;
+      --danger-bg: rgba(239, 68, 68, 0.1);
+      --font: 'Plus Jakarta Sans', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      padding: 30px 20px;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    header {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .title-area h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .title-area p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-top: 4px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+    }
+
+    button {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.2s;
+    }
+
+    button:hover {
+      background: var(--primary-hover);
+    }
+
+    .btn-secondary {
+      background: #1e293b;
+      color: var(--text);
+      border: 1px solid var(--card-border);
+    }
+
+    .btn-secondary:hover {
+      background: #334155;
+    }
+
+    .summary-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .summary-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 18px;
+    }
+
+    .summary-card-title {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    .summary-card-val {
+      font-size: 1.8rem;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+
+    .suite-section {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+
+    .suite-header {
+      padding: 16px 20px;
+      background: #162032;
+      border-bottom: 1px solid var(--card-border);
+      font-weight: 600;
+      font-size: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .test-list {
+      list-style: none;
+    }
+
+    .test-item {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      font-size: 0.9rem;
+    }
+
+    .test-item:last-child {
+      border-bottom: none;
+    }
+
+    .test-badge {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .badge-pass {
+      background: var(--success-bg);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .badge-fail {
+      background: var(--danger-bg);
+      color: var(--danger);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .test-content {
+      flex: 1;
+    }
+
+    .test-error {
+      margin-top: 6px;
+      padding: 8px 12px;
+      background: rgba(239, 68, 68, 0.08);
+      border-left: 3px solid var(--danger);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: #fca5a5;
+      border-radius: 0 4px 4px 0;
+    }
+
+    .console-hint {
+      margin-top: 24px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    .console-hint code {
+      background: #1e293b;
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--primary);
+      font-family: var(--font-mono);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="title-area">
+        <h1>🧪 Painel de Testes Unitários</h1>
+        <p>Validação da Lógica de Negócio: localStorage Mock, Parcelamento & Cálculos</p>
+      </div>
+      <div class="actions">
+        <a href="index.html" style="text-decoration: none;">
+          <button type="button" class="btn-secondary">Voltar à SPA</button>
+        </a>
+        <button type="button" id="btnRunTests">Executar Testes Novamente</button>
+      </div>
+    </header>
+
+    <div class="summary-cards">
+      <div class="summary-card">
+        <div class="summary-card-title">Total de Testes</div>
+        <div class="summary-card-val" id="valTotal">-</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-card-title">Aprovados</div>
+        <div class="summary-card-val" id="valPassed" style="color: var(--success);">-</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-card-title">Falhas</div>
+        <div class="summary-card-val" id="valFailed" style="color: var(--danger);">-</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-card-title">Tempo de Execução</div>
+        <div class="summary-card-val" id="valDuration">-</div>
+      </div>
+    </div>
+
+    <main id="suitesContainer">
+      <!-- Gerado via script -->
+    </main>
+
+    <p class="console-hint">
+      Dica: Você também pode abrir o Console do DevTools (F12) e digitar <code>runTests()</code> a qualquer momento.
+    </p>
+  </div>
+
+  <!-- Scripts da aplicação e suíte de testes -->
+  <script src="app.js"></script>
+  <script src="app.test.js"></script>
+
+  <script>
+    async function executeAndRender() {
+      const container = document.getElementById('suitesContainer');
+      container.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">Executando suítes de testes unitários...</div>';
+
+      const results = await window.runTests();
+
+      document.getElementById('valTotal').textContent = results.totalTests;
+      document.getElementById('valPassed').textContent = results.passed;
+      document.getElementById('valFailed').textContent = results.failed;
+      document.getElementById('valDuration').textContent = results.durationMs + ' ms';
+
+      container.innerHTML = '';
+
+      window.TestRunner.testRunner.suites.forEach(suite => {
+        const section = document.createElement('div');
+        section.className = 'suite-section';
+
+        const header = document.createElement('div');
+        header.className = 'suite-header';
+        header.innerHTML = `<span>${suite.name}</span><span>${suite.tests.length} casos</span>`;
+        section.appendChild(header);
+
+        const list = document.createElement('ul');
+        list.className = 'test-list';
+
+        suite.tests.forEach(testCase => {
+          const res = results.results.find(r => r.Teste === testCase.name);
+          const isPass = res && res.Status.includes('PASSOU');
+
+          const li = document.createElement('li');
+          li.className = 'test-item';
+          li.innerHTML = `
+            <span class="test-badge ${isPass ? 'badge-pass' : 'badge-fail'}">
+              ${isPass ? 'PASS' : 'FAIL'}
+            </span>
+            <div class="test-content">
+              <div>${testCase.name}</div>
+              ${!isPass && res ? `<div class="test-error">${res.Detalhes}</div>` : ''}
+            </div>
+          `;
+          list.appendChild(li);
+        });
+
+        section.appendChild(list);
+        container.appendChild(section);
+      });
+    }
+
+    document.getElementById('btnRunTests').addEventListener('click', executeAndRender);
+    window.addEventListener('DOMContentLoaded', executeAndRender);
+  </script>
+</body>
+</html>
