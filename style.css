@@ -583,9 +583,26 @@ button, input, select {
   align-items: flex-end;
 }
 
+/* Grade do Formulário de Lançamento (Desktop: Descrição, Parcela, Valor, Repasse e Botão) */
+.transaction-form .form-row {
+  display: grid;
+  /* Proporções: Descrição (maior), Parcela (pequeno), Valor, Repasse, Botão (tamanho automático) */
+  grid-template-columns: 2fr 0.8fr 1.2fr 1.5fr auto;
+  gap: 1rem;
+  align-items: flex-end; /* CRÍTICO: Alinha o botão na base dos inputs, ignorando o espaço das labels */
+}
+
+/* Ajuste dinâmico quando o Repasse estiver oculto (ex: contas normais) */
+.transaction-form .form-row:has(#transRepasseGroup[style*="none"]) {
+  grid-template-columns: 2fr 0.8fr 1.2fr auto;
+}
+
 .form-group {
+  position: relative;
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
+  height: 100%;
   gap: 7px;
 }
 
@@ -594,25 +611,51 @@ button, input, select {
 .flex-3 { flex: 3; }
 
 .form-actions {
+  display: flex;
+  align-items: flex-end;
   justify-content: flex-end;
+  gap: 8px;
+  margin: 0;
+  margin-top: 0;
+  height: 100%;
+}
+
+.form-actions .btn {
+  height: 44px;
+  min-height: 44px;
+  max-height: 44px;
+  margin: 0;
+  margin-top: 0;
+  white-space: nowrap;
+  box-sizing: border-box;
 }
 
 .form-group label {
   font-size: 0.84rem;
   font-weight: 600;
   color: var(--text-secondary);
+  white-space: nowrap;
 }
 
-.form-control {
+.form-control,
+input.form-control,
+select.form-control {
   background-color: var(--bg-input);
   border: 1px solid var(--border-color);
   color: var(--text-main);
   border-radius: var(--radius-md);
-  padding: 11px 14px;
+  padding: 10px 14px;
   font-size: 0.9rem;
+  line-height: 1.3;
   transition: var(--transition);
   outline: none;
   width: 100%;
+  height: 44px;
+  min-height: 44px;
+  max-height: 44px;
+  box-sizing: border-box;
+  margin: 0;
+  vertical-align: middle;
 }
 
 .form-control:focus {
@@ -627,6 +670,8 @@ button, input, select {
 select.form-control {
   cursor: pointer;
   appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 14px center;
@@ -639,9 +684,19 @@ select.form-control option {
 }
 
 .form-error {
+  position: absolute;
+  top: 100%;
+  left: 0;
   font-size: 0.74rem;
   color: var(--danger);
-  min-height: 14px;
+  line-height: 1.2;
+  margin-top: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.form-error:empty {
+  display: none;
 }
 
 /* Filtro de Tipo de Compra na Tabela de Lançamentos */
@@ -1787,6 +1842,20 @@ td.valor-credito,
   .metrics-grid {
     grid-template-columns: repeat(2, 1fr);
   }
+
+  /* Grade do Formulário no Tablet: 2 Colunas */
+  .transaction-form .form-row,
+  .transaction-form .form-row:has(#transRepasseGroup[style*="none"]) {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+    align-items: flex-end;
+  }
+
+  .transaction-form .form-actions {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+    width: 100%;
+  }
 }
 
 @media (max-width: 992px) {
@@ -1798,21 +1867,6 @@ td.valor-credito,
   .cat-month-selector {
     width: 100%;
     justify-content: space-between;
-  }
-}
-
-@media (max-width: 860px) {
-  .form-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .form-actions {
-    margin-top: 6px;
-  }
-
-  .btn {
-    width: 100%;
   }
 }
 
@@ -1926,5 +1980,29 @@ td.valor-credito,
 
   .sheet-search-wrapper {
     min-width: 100%;
+  }
+
+  /* 5. Formulários Empilhados no Celular (1 Coluna + Botão 100%) */
+  .form-row,
+  .transaction-form .form-row,
+  .transaction-form .form-row:has(#transRepasseGroup[style*="none"]) {
+    display: flex;
+    flex-direction: column;
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+    align-items: stretch;
+  }
+
+  .form-actions,
+  .transaction-form .form-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    margin-top: 6px;
+    flex-direction: column;
+  }
+
+  .btn,
+  .form-actions .btn {
+    width: 100%;
   }
 }

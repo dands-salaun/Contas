@@ -694,6 +694,45 @@
       expect(result.transactions.find(t => t.id === 't_avulso_1').value).toBe(95);
       expect(result.transactions.find(t => t.id === 't_avulso_2').value).toBe(100);
     });
+
+    it('2.6 Exclusão com linkedId: ao excluir um item, o par vinculado pelo linkedId também é excluído', () => {
+      const linkId = 'link_sofisa_francisca_1';
+      const transactions = [
+        { id: 't_despesa_cartao', linkedId: linkId, description: 'Tênis Nike', value: 300, monthIndex: 5, year: 2026 },
+        { id: 't_receita_repasse', linkedId: linkId, description: 'Tênis Nike (Origem: Sofisa)', value: 300, monthIndex: 5, year: 2026 },
+        { id: 't_outro', linkedId: null, description: 'Mercado', value: 150, monthIndex: 5, year: 2026 }
+      ];
+
+      // Exclui a despesa do cartão
+      const result = deleteTransactionCascade(transactions, 't_despesa_cartao', false);
+
+      expect(result.deletedCount).toBe(2);
+      expect(result.transactions.some(t => t.id === 't_despesa_cartao')).toBe(false);
+      expect(result.transactions.some(t => t.id === 't_receita_repasse')).toBe(false);
+      expect(result.transactions.some(t => t.id === 't_outro')).toBe(true);
+    });
+
+    it('2.7 Exclusão de compras parceladas vinculadas com linkedId e groupId: apaga parcelas e receitas correspondentes', () => {
+      const link1 = 'link_p1';
+      const link2 = 'link_p2';
+      const groupDesp = 'grp_cartao_10x';
+      const groupRep = 'grp_repasse_10x';
+
+      const transactions = [
+        { id: 'd_1', groupId: groupDesp, linkedId: link1, description: 'Celular 1/2', value: 500, monthIndex: 3, year: 2026 },
+        { id: 'r_1', groupId: groupRep, linkedId: link1, description: 'Celular 1/2 (Origem: Nubank)', value: 500, monthIndex: 3, year: 2026 },
+        { id: 'd_2', groupId: groupDesp, linkedId: link2, description: 'Celular 2/2', value: 500, monthIndex: 4, year: 2026 },
+        { id: 'r_2', groupId: groupRep, linkedId: link2, description: 'Celular 2/2 (Origem: Nubank)', value: 500, monthIndex: 4, year: 2026 },
+        { id: 'outro', groupId: null, linkedId: null, description: 'Luz', value: 100, monthIndex: 3, year: 2026 }
+      ];
+
+      // Exclui a partir da parcela 1 com cascata futura
+      const result = deleteTransactionCascade(transactions, 'd_1', true);
+
+      expect(result.deletedCount).toBe(4); // d_1, r_1, d_2, r_2
+      expect(result.transactions).toHaveLength(1);
+      expect(result.transactions[0].id).toBe('outro');
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -801,6 +840,29 @@
       expect(summary.totalDespesas).toBe(300.00); // 350 - 50 = 300
       expect(summary.saldoPrevisto).toBe(3700.00); // 4000 - 300 = 3700
       expect(summary.categoryTotals.get('cartão black')).toBe(300.00);
+    });
+
+    it('3.8 Repasses manuais comportam-se como valores a receber (somam em Receitas e no Saldo Previsto, NUNCA em Despesas)', () => {
+      const catsWithRepasse = [
+        { id: 'c_sal', name: 'Salário', type: 'Receita' },
+        { id: 'c_luz', name: 'Luz', type: 'Conta Fixa' },
+        { id: 'c_rep', name: 'Francisca', type: 'Repasse' }
+      ];
+
+      const transactions = [
+        { categoryName: 'Salário', value: 3000.00, monthIndex: 2, year: 2026 },
+        { categoryName: 'Luz', value: 200.00, monthIndex: 2, year: 2026 },
+        { categoryName: 'Francisca', value: 500.00, monthIndex: 2, year: 2026 } // Repasse manual
+      ];
+
+      const summary = calculateTotalsByMonthAndYear(transactions, catsWithRepasse, 2, 2026);
+      
+      // Receitas devem incluir o salário (3000) e o repasse a receber (500) = 3500
+      expect(summary.totalReceitas).toBe(3500.00);
+      // Despesas devem conter apenas a conta de Luz = 200 (Repasse NUNCA infla despesas)
+      expect(summary.totalDespesas).toBe(200.00);
+      // Saldo Previsto = 3500 - 200 = 3300
+      expect(summary.saldoPrevisto).toBe(3300.00);
     });
   });
 

@@ -22,7 +22,7 @@ const CATEGORY_TYPES = [
   { id: 'Conta Fixa', label: 'Contas Fixas', badgeClass: 'badge-fixa', isRevenue: false },
   { id: 'Cartão de Crédito', label: 'Cartões de Crédito', badgeClass: 'badge-cartao', isRevenue: false },
   { id: 'Variável Prevista', label: 'Variáveis Previstas', badgeClass: 'badge-variavel', isRevenue: false },
-  { id: 'Repasse', label: 'Repasses', badgeClass: 'badge-repasse', isRevenue: false }
+  { id: 'Repasse', label: 'Repasses', badgeClass: 'badge-repasse', isRevenue: true }
 ];
 
 const MONTH_NAMES = [
@@ -129,6 +129,7 @@ function normalizeCategory(item, idx = 0) {
 function normalizeTransaction(item, idx = 0) {
   const id = item.id ? String(item.id) : ('lanc_' + Date.now() + '_' + idx);
   const groupId = item.groupId ? String(item.groupId) : null;
+  const linkedId = item.linkedId ? String(item.linkedId) : null;
   const categoryId = item.categoryId ? String(item.categoryId) : null;
   const categoryName = (item.categoryName || item.categoria || item.category || '').toString().trim();
   
@@ -150,9 +151,10 @@ function normalizeTransaction(item, idx = 0) {
   const installment = (item.installment || item.parcela || '-').toString().trim();
   const value = Number(item.value !== undefined ? item.value : (item.valor !== undefined ? item.valor : 0)) || 0;
   const isPaid = Boolean(item.isPaid !== undefined ? item.isPaid : (item.pago !== undefined ? item.pago : (item.status === true || item.status === 'pago')));
+  const isRevenue = item.isRevenue !== undefined ? Boolean(item.isRevenue) : undefined;
   const categoryType = item.categoryType ? normalizeCategoryType(item.categoryType) : undefined;
 
-  return { id, groupId, categoryId, categoryName, categoryType, year, monthIndex, description, installment, value, isPaid };
+  return { id, groupId, linkedId, categoryId, categoryName, categoryType, year, monthIndex, description, installment, value, isPaid, isRevenue };
 }
 
 // =============================================================================
@@ -273,7 +275,9 @@ function generateTransactionsMultiYear({
   categoryName = '',
   categoryType = 'Conta Fixa',
   isPaid = false,
-  shouldPropagate = true
+  shouldPropagate = true,
+  linkedId = null,
+  isRevenue = undefined
 } = {}) {
   const descVal = (description || '').toString().trim();
   const valNum = Number(value) || 0;
@@ -297,6 +301,7 @@ function generateTransactionsMultiYear({
       return [{
         id: 'lanc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
         groupId: null,
+        linkedId: linkedId || null,
         categoryId: categoryId || null,
         categoryName: categoryName.trim(),
         categoryType: typeNorm,
@@ -305,7 +310,8 @@ function generateTransactionsMultiYear({
         description: descVal,
         installment: installmentRaw || '-',
         value: valNum,
-        isPaid: Boolean(isPaid)
+        isPaid: Boolean(isPaid),
+        ...(isRevenue !== undefined ? { isRevenue } : {})
       }];
     }
 
@@ -313,6 +319,7 @@ function generateTransactionsMultiYear({
     const result = [{
       id: 'lanc_' + Date.now() + '_0_' + Math.random().toString(36).substring(2, 6),
       groupId,
+      linkedId: linkedId || null,
       categoryId: categoryId || null,
       categoryName: categoryName.trim(),
       categoryType: typeNorm,
@@ -321,7 +328,8 @@ function generateTransactionsMultiYear({
       description: descVal,
       installment: installmentRaw || '-',
       value: valNum,
-      isPaid: Boolean(isPaid)
+      isPaid: Boolean(isPaid),
+      ...(isRevenue !== undefined ? { isRevenue } : {})
     }];
 
     // Gera os lançamentos do mês seguinte (currentMonth + 1) até o índice 11 (Dezembro) do ano atual
@@ -329,6 +337,7 @@ function generateTransactionsMultiYear({
       result.push({
         id: 'lanc_' + Date.now() + '_' + (m - currentMonth) + '_' + Math.random().toString(36).substring(2, 6),
         groupId,
+        linkedId: linkedId || null,
         categoryId: categoryId || null,
         categoryName: categoryName.trim(),
         categoryType: typeNorm,
@@ -337,7 +346,8 @@ function generateTransactionsMultiYear({
         description: descVal,
         installment: installmentRaw || '-',
         value: valNum,
-        isPaid: false
+        isPaid: false,
+        ...(isRevenue !== undefined ? { isRevenue } : {})
       });
     }
     return result;
@@ -356,6 +366,7 @@ function generateTransactionsMultiYear({
       return [{
         id: 'lanc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
         groupId: null,
+        linkedId: linkedId || null,
         categoryId: categoryId || null,
         categoryName: categoryName.trim(),
         categoryType: typeNorm,
@@ -364,7 +375,8 @@ function generateTransactionsMultiYear({
         description: descVal,
         installment: installmentRaw || '-',
         value: valNum,
-        isPaid: Boolean(isPaid)
+        isPaid: Boolean(isPaid),
+        ...(isRevenue !== undefined ? { isRevenue } : {})
       }];
     }
 
@@ -391,6 +403,7 @@ function generateTransactionsMultiYear({
       result.push({
         id: 'lanc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7) + '_' + p,
         groupId,
+        linkedId: linkedId || null,
         categoryId: categoryId || null,
         categoryName: categoryName.trim(),
         categoryType: typeNorm,
@@ -399,7 +412,8 @@ function generateTransactionsMultiYear({
         description: descVal,
         installment: `${p}/${totalInst}`,
         value: valNum,
-        isPaid: Boolean(isPaid && i === 0)
+        isPaid: Boolean(isPaid && i === 0),
+        ...(isRevenue !== undefined ? { isRevenue } : {})
       });
     }
     return result;
@@ -409,6 +423,7 @@ function generateTransactionsMultiYear({
   return [{
     id: 'lanc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
     groupId: null,
+    linkedId: linkedId || null,
     categoryId: categoryId || null,
     categoryName: categoryName.trim(),
     categoryType: typeNorm,
@@ -417,7 +432,8 @@ function generateTransactionsMultiYear({
     description: descVal,
     installment: installmentRaw || '-',
     value: valNum,
-    isPaid: Boolean(isPaid)
+    isPaid: Boolean(isPaid),
+    ...(isRevenue !== undefined ? { isRevenue } : {})
   }];
 }
 
@@ -437,24 +453,29 @@ function deleteTransactionCascade(transactions = [], transactionId, shouldDelete
   const targetAbsoluteTime = (Number(target.year) * 12) + Number(target.monthIndex);
 
   if (shouldDeleteSubsequent) {
-    // Exclui o item alvo e todas as ocorrências FUTURAS do mesmo grupo
-    const remaining = transactions.filter(item => {
-      if (item.id === target.id) return false;
+    // Exclui o item alvo e todas as ocorrências FUTURAS do mesmo grupo (e pares vinculados por linkedId)
+    // Coleta todos os linkedIds dos itens excluídos do grupo
+    const groupItemsToDelete = new Set();
+    const linkedIdsToDelete = new Set();
 
+    transactions.forEach(item => {
       const itemAbsoluteTime = (Number(item.year) * 12) + Number(item.monthIndex);
+      const isTarget = item.id === target.id;
+      const isFutureGroup = Boolean(target.groupId && item.groupId === target.groupId && itemAbsoluteTime >= targetAbsoluteTime);
+      const isLegacyInstallment = Boolean(!target.groupId && target.installment && target.installment.includes('/') &&
+        item.categoryName.toLowerCase() === target.categoryName.toLowerCase() &&
+        item.description.toLowerCase() === target.description.toLowerCase() &&
+        itemAbsoluteTime >= targetAbsoluteTime);
 
-      if (target.groupId && item.groupId === target.groupId && itemAbsoluteTime > targetAbsoluteTime) {
-        return false;
+      if (isTarget || isFutureGroup || isLegacyInstallment) {
+        groupItemsToDelete.add(item.id);
+        if (item.linkedId) linkedIdsToDelete.add(item.linkedId);
       }
+    });
 
-      if (!target.groupId && target.installment && target.installment.includes('/')) {
-        if (item.categoryName.toLowerCase() === target.categoryName.toLowerCase() &&
-            item.description.toLowerCase() === target.description.toLowerCase() &&
-            itemAbsoluteTime > targetAbsoluteTime) {
-          return false;
-        }
-      }
-
+    const remaining = transactions.filter(item => {
+      if (groupItemsToDelete.has(item.id)) return false;
+      if (item.linkedId && linkedIdsToDelete.has(item.linkedId)) return false;
       return true;
     });
 
@@ -464,11 +485,15 @@ function deleteTransactionCascade(transactions = [], transactionId, shouldDelete
       deletedTarget: target
     };
   } else {
-    // Exclui apenas o lançamento atual
-    const remaining = transactions.filter(item => item.id !== target.id);
+    // Exclui apenas o lançamento atual (e seu par vinculado via linkedId, se houver)
+    const remaining = transactions.filter(item => {
+      if (item.id === target.id) return false;
+      if (target.linkedId && item.linkedId === target.linkedId) return false;
+      return true;
+    });
     return {
       transactions: remaining,
-      deletedCount: 1,
+      deletedCount: transactions.length - remaining.length,
       deletedTarget: target
     };
   }
@@ -607,7 +632,8 @@ function calculateTotalsByMonthAndYear(transactions = [], categories = [], month
         const prevCatTotal = categoryTotals.get(catNameKey) || 0;
         categoryTotals.set(catNameKey, Math.round((prevCatTotal + val) * 100) / 100);
 
-        if (type === 'Receita') {
+        const isItemRevenue = Boolean(t.isRevenue === true || type === 'Receita' || type === 'Repasse');
+        if (isItemRevenue) {
           totalReceitas += val;
         } else {
           totalDespesas += val;
@@ -730,6 +756,8 @@ const DOM = {
   transDescError: document.getElementById('transDescError'),
   transInstallmentError: document.getElementById('transInstallmentError'),
   transValueError: document.getElementById('transValueError'),
+  transRepasseGroup: document.getElementById('transRepasseGroup'),
+  transRepasseSelect: document.getElementById('transRepasseSelect'),
   btnAddTransaction: document.getElementById('btnAddTransaction'),
   btnSubmitTransText: document.getElementById('btnSubmitTransText'),
   btnCancelEdit: document.getElementById('btnCancelEdit'),
@@ -2192,12 +2220,42 @@ function setupCategoryDetailView(category) {
     DOM.filtroTipoCompra.value = 'todos';
   }
 
+  // Campo Condicional: Vincular a Repasse (apenas para Cartão de Crédito)
+  updateTransRepasseVisibility(category);
+
   setActiveMonth(AppState.selectedMonthIndex);
 
   // Autofocus no campo "Descrição" ao abrir o formulário de lançamento
   setTimeout(() => {
     DOM.transDescriptionInput?.focus();
   }, 60);
+}
+
+/**
+ * Atualiza a visibilidade e as opções do campo "Vincular a Repasse"
+ * Exibido apenas se a categoria ativa for do tipo "Cartão de Crédito".
+ */
+function updateTransRepasseVisibility(category) {
+  if (!DOM.transRepasseGroup || !DOM.transRepasseSelect) return;
+
+  const isCreditCard = category && normalizeCategoryType(category.type) === 'Cartão de Crédito';
+
+  if (isCreditCard && !AppState.editingTransactionId) {
+    DOM.transRepasseGroup.style.display = 'flex';
+    DOM.transRepasseSelect.innerHTML = '<option value="">Nenhum repasse vinculado</option>';
+
+    const repasseCats = AppState.categories.filter(c => normalizeCategoryType(c.type) === 'Repasse');
+    repasseCats.forEach(rc => {
+      const opt = document.createElement('option');
+      opt.value = rc.id;
+      opt.textContent = rc.name;
+      DOM.transRepasseSelect.appendChild(opt);
+    });
+  } else {
+    DOM.transRepasseGroup.style.display = 'none';
+    DOM.transRepasseSelect.value = '';
+    DOM.transRepasseSelect.innerHTML = '<option value="">Nenhum repasse vinculado</option>';
+  }
 }
 
 function updateMonthTotal() {
@@ -2243,6 +2301,10 @@ function startEditingTransaction(id) {
   DOM.transDescriptionInput.focus();
   DOM.transactionForm.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
+  if (DOM.transRepasseGroup) {
+    DOM.transRepasseGroup.style.display = 'none';
+  }
+
   showToast(`Editando "${t.description}"...`);
 }
 
@@ -2269,6 +2331,9 @@ function cancelEditingTransaction() {
   if (DOM.transDescriptionInput) DOM.transDescriptionInput.style.borderColor = '';
   if (DOM.transInstallmentInput) DOM.transInstallmentInput.style.borderColor = '';
   if (DOM.transValueInput) DOM.transValueInput.style.borderColor = '';
+
+  const activeCategory = AppState.categories.find(c => c.id === AppState.activeCategoryId);
+  updateTransRepasseVisibility(activeCategory);
 }
 
 /**
@@ -2604,7 +2669,12 @@ function handleTransactionSubmit(e) {
   }
 
   try {
-    const generated = generateTransactionsMultiYear({
+    const isCreditCard = typeNorm === 'Cartão de Crédito';
+    const repasseTargetId = (isCreditCard && DOM.transRepasseSelect) ? DOM.transRepasseSelect.value : '';
+    const repasseCategory = repasseTargetId ? AppState.categories.find(c => c.id === repasseTargetId) : null;
+
+    // Registo 1: A Despesa no Cartão de Crédito
+    const generatedExpense = generateTransactionsMultiYear({
       description: descVal,
       value: valNum,
       installment: installmentRaw,
@@ -2617,20 +2687,54 @@ function handleTransactionSubmit(e) {
       shouldPropagate: propagar
     });
 
-    AppState.transactions.push(...generated);
+    let generatedRevenue = [];
+    if (repasseCategory) {
+      // Registo 2: A Receita vinculada ao Repasse
+      // 4. Rastreabilidade Visual: Concatena o nome do Cartão à descrição
+      const repasseDesc = `${descVal} ( ${activeCategory.name} )`;
+
+      generatedRevenue = generateTransactionsMultiYear({
+        description: repasseDesc,
+        value: valNum,
+        installment: installmentRaw,
+        monthIndex: currentMonth,
+        year: currentYear,
+        categoryId: repasseCategory.id,
+        categoryName: repasseCategory.name,
+        categoryType: repasseCategory.type,
+        isPaid: false,
+        shouldPropagate: propagar,
+        isRevenue: true
+      });
+
+      // Vincula cada parcela/ocorrência correspondente por um linkedId único compartilhado
+      const totalPairs = Math.min(generatedExpense.length, generatedRevenue.length);
+      for (let i = 0; i < totalPairs; i++) {
+        const linkToken = 'link_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substring(2, 7);
+        generatedExpense[i].linkedId = linkToken;
+        generatedRevenue[i].linkedId = linkToken;
+      }
+    }
+
+    const allNewTransactions = [...generatedExpense, ...generatedRevenue];
+    AppState.transactions.push(...allNewTransactions);
     saveTransactions(AppState.transactions);
     triggerCloudSync();
 
     DOM.transDescriptionInput.value = '';
     DOM.transInstallmentInput.value = '';
     DOM.transValueInput.value = '';
+    if (DOM.transRepasseSelect) DOM.transRepasseSelect.value = '';
     DOM.transDescriptionInput.focus();
 
     renderTransactionsTable();
     renderDashboard();
 
-    if (generated.length > 1) {
-      showToast(`Lançamento projetado com sucesso para os ${generated.length} meses seguintes!`);
+    if (repasseCategory) {
+      const countMsg = generatedExpense.length > 1 ? `${generatedExpense.length} parcelas` : '1 lançamento';
+      showToast(`Despesa vinculada criada no cartão e entrada registrada em "${repasseCategory.name}" (${countMsg})!`);
+    } else if (generatedExpense.length > 1) {
+      showToast(`Lançamento projetado com sucesso para os ${generatedExpense.length} meses seguintes!`);
     } else {
       showToast('Lançamento salvo com sucesso para o mês selecionado!');
     }

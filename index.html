@@ -460,7 +460,15 @@
                   <span class="form-error" id="transValueError"></span>
                 </div>
 
-                <div class="form-group flex-2 form-actions" style="display: flex; gap: 8px; flex-direction: row; align-items: flex-end;">
+                <div class="form-group flex-2" id="transRepasseGroup" style="display: none;">
+                  <label for="transRepasseSelect">Vincular a Repasse (Opcional)</label>
+                  <select id="transRepasseSelect" class="form-control">
+                    <option value="">Nenhum repasse vinculado</option>
+                  </select>
+                  <span class="form-error" id="transRepasseError"></span>
+                </div>
+
+                <div class="form-group form-actions">
                   <button type="submit" class="btn btn-primary" id="btnAddTransaction">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="btnSubmitTransIcon">
                       <line x1="12" y1="5" x2="12" y2="19"></line>
