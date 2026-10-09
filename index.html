@@ -204,13 +204,22 @@
                 </div>
 
                 <div class="form-group flex-1 form-actions">
-                  <button type="submit" class="btn btn-primary" id="btnAddCategory">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <line x1="12" y1="5" x2="12" y2="19"></line>
-                      <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                    <span>Adicionar</span>
-                  </button>
+                  <div class="action-buttons">
+                    <button type="submit" class="btn btn-primary" id="btnAddCategory">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="btnSubmitCategoryIcon">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                      </svg>
+                      <span id="btnSubmitCategoryText">Adicionar</span>
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="btnCancelEditCategory" style="display: none;">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                      </svg>
+                      <span>Cancelar</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </form>
@@ -767,7 +776,5 @@
   <div class="toast-container" id="toast-container" aria-live="polite"></div>
 
   <script src="app.js"></script>
-  <!-- Suíte de Testes Unitários (execute runTests() no DevTools Console) -->
-  <script src="app.test.js"></script>
 </body>
 </html>

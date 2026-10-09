@@ -35,12 +35,18 @@ MODULES_ORDER = [
 ]
 
 def clean_module_code(content: str, filename: str) -> str:
+    # Remove all ES6 imports (including multiline and side-effect imports)
+    content = re.sub(r'import\s+(?:(?:\*\s+as\s+[\w$]+)|(?:\{[^}]*\}|[\w$]+))\s+from\s+[\'"][^\'"]+[\'"]\s*;?', '', content, flags=re.DOTALL)
+    content = re.sub(r'import\s+[\'"][^\'"]+[\'"]\s*;?', '', content)
+    # Remove named exports isolados (single ou multiline): export { ... };
+    content = re.sub(r'export\s*\{[^}]*\}\s*;?', '', content, flags=re.DOTALL)
+
     lines = content.splitlines()
     cleaned = []
     
     for line in lines:
         stripped = line.strip()
-        # Remove imports
+        # Fallback para imports residuais de linha única
         if stripped.startswith("import ") and " from " in stripped:
             continue
         # Remove export default
@@ -48,9 +54,6 @@ def clean_module_code(content: str, filename: str) -> str:
             line = line.replace("export default ", "")
         # Remove export const / export function / export let / export async function / export class
         line = re.sub(r"^export\s+(const|let|var|function|async\s+function|class)\s+", r"\1 ", line)
-        # Remove named exports isolados no final do módulo: export { ... };
-        if re.match(r"^export\s*\{[^}]*\}\s*;?$", stripped):
-            continue
             
         cleaned.append(line)
         
@@ -107,12 +110,6 @@ function setupEventListeners() {
   if (DOM.overlayFiltros) DOM.overlayFiltros.addEventListener('click', closeFiltersDrawer);
   if (DOM.btnLimparFiltros) DOM.btnLimparFiltros.addEventListener('click', clearTypeFilters);
 
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && DOM.drawerFiltros && DOM.drawerFiltros.classList.contains('open')) {
-      closeFiltersDrawer();
-    }
-  });
-
   if (DOM.fixedNavLinks) {
     DOM.fixedNavLinks.forEach(link => {
       link.addEventListener('click', () => {
@@ -156,6 +153,10 @@ function setupEventListeners() {
       if (DOM.typeError) DOM.typeError.textContent = '';
       DOM.categoryTypeSelect.style.borderColor = '';
     });
+  }
+
+  if (DOM.btnCancelEditCategory) {
+    DOM.btnCancelEditCategory.addEventListener('click', cancelEditingCategory);
   }
 
   if (DOM.transDescriptionInput) {
@@ -204,7 +205,6 @@ function setupEventListeners() {
 
   if (DOM.btnOpenChartsModal) DOM.btnOpenChartsModal.addEventListener('click', openChartsModal);
   if (DOM.btnCloseChartsModal) DOM.btnCloseChartsModal.addEventListener('click', closeChartsModal);
-  if (DOM.btnDoneChartsModal) DOM.btnDoneChartsModal.addEventListener('click', closeChartsModal);
   if (DOM.modalChartsOverlay) {
     DOM.modalChartsOverlay.addEventListener('click', (e) => {
       if (e.target === DOM.modalChartsOverlay) closeChartsModal();
@@ -214,8 +214,12 @@ function setupEventListeners() {
     DOM.chartMonthSelect.addEventListener('change', (e) => {
       onChartMonthChange(e.target.value);
     });
+    DOM.chartMonthSelect.addEventListener('click', () => {
+      if (DOM.chartMonthSelect.classList.contains('active') === false) {
+        onChartMonthChange(DOM.chartMonthSelect.value);
+      }
+    });
   }
-  if (DOM.btnChartPeriodMonth) DOM.btnChartPeriodMonth.addEventListener('click', () => setChartPeriodMode('month'));
   if (DOM.btnChartPeriodYear) DOM.btnChartPeriodYear.addEventListener('click', () => setChartPeriodMode('year'));
   if (DOM.btnChartGroupCategory) DOM.btnChartGroupCategory.addEventListener('click', () => setChartGroupMode('category'));
   if (DOM.btnChartGroupType) DOM.btnChartGroupType.addEventListener('click', () => setChartGroupMode('type'));
@@ -234,6 +238,7 @@ function setupEventListeners() {
         return;
       }
       cancelEditingTransaction();
+      cancelEditingCategory();
       resetAllForms();
       closeMobileSidebar();
       closeFiltersDrawer();
@@ -259,10 +264,10 @@ function init() {
 
   if (DOM.storageStatusBadge) {
     if (StorageEngine.isAvailable) {
-      DOM.storageStatusBadge.innerHTML = '<span class=\"status-dot\"></span><span>Storage Ativo</span>';
+      DOM.storageStatusBadge.innerHTML = '<span class="status-dot"></span><span>Storage Ativo</span>';
     } else {
       DOM.storageStatusBadge.style.color = 'var(--warning)';
-      DOM.storageStatusBadge.innerHTML = '<span class=\"status-dot\" style=\"background: var(--warning)\"></span><span>Modo Sessão</span>';
+      DOM.storageStatusBadge.innerHTML = '<span class="status-dot" style="background: var(--warning)"></span><span>Modo Sessão</span>';
     }
   }
 
@@ -318,6 +323,7 @@ window.Financas = {
   applyTypeFilters,
   clearTypeFilters,
   exportBackup,
+  importBackup,
   clearAllLocalData,
   loadLastUpdated,
   touchLastUpdated,
@@ -345,11 +351,18 @@ window.Financas = {
   toggleTransactionPaid,
   deleteTransaction,
   handleTransactionSubmit,
+  updateMonthTotal,
+  isParcelada,
   renderCategoryTable,
   addCategory,
   deleteCategory,
+  startEditingCategory,
+  cancelEditingCategory,
+  updateCategory,
   handleCategorySubmit,
   renderDashboard,
+  renderDashboardMetrics,
+  getFilteredCategoriesForDashboard,
   renderDashboardTables,
   renderSpreadsheetBlock,
   calculateExpensesChartData,

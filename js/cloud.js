@@ -12,9 +12,38 @@ import { setCloudStatus, showToast, debounce } from './utils.js';
 import { touchLastUpdated, saveCategories, saveTransactions, saveTags, updateLastUpdatedUI, setCloudSyncHook } from './storage.js';
 import { normalizeCategory, normalizeTransaction } from './normalization.js';
 
+export function getStoredString(key) {
+  try {
+    const val = localStorage.getItem(key);
+    if (val !== null) return val;
+  } catch (e) {}
+  try {
+    const val = sessionStorage.getItem(key);
+    if (val !== null) return val;
+  } catch (e) {}
+  return '';
+}
+
+export function setStoredString(key, val) {
+  const str = String(val || '');
+  try {
+    localStorage.setItem(key, str);
+  } catch (e) {}
+  try {
+    sessionStorage.setItem(key, str);
+  } catch (e) {}
+}
+
+function getFetchSignal(timeoutMs = 15000) {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(timeoutMs);
+  }
+  return undefined;
+}
+
 export function loadCloudCredentials() {
-  const apiKey = (localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
-  const binId = (localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
+  const apiKey = (getStoredString(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
+  const binId = (getStoredString(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
 
   if (DOM.jsonbinApiKey && !DOM.jsonbinApiKey.value) {
     DOM.jsonbinApiKey.value = apiKey;
@@ -24,9 +53,9 @@ export function loadCloudCredentials() {
   }
 
   if (apiKey && binId) {
-    setCloudStatus('synced', '☁️ Nuvem Atualizada');
+    setCloudStatus('syncing', '☁️ Conectando...');
   } else {
-    setCloudStatus('disconnected', '☁️ Nuvem Atualizada');
+    setCloudStatus('disconnected', '☁️ Nuvem Desconectada');
   }
 
   updateLastUpdatedUI();
@@ -36,18 +65,30 @@ export function saveCloudCredentials() {
   const apiKey = (DOM.jsonbinApiKey ? DOM.jsonbinApiKey.value : '').trim();
   const binId = (DOM.jsonbinBinId ? DOM.jsonbinBinId.value : '').trim();
 
-  localStorage.setItem(STORAGE_KEYS.JSONBIN_KEY, apiKey);
-  localStorage.setItem(STORAGE_KEYS.JSONBIN_BIN_ID, binId);
+  setStoredString(STORAGE_KEYS.JSONBIN_KEY, apiKey);
+  setStoredString(STORAGE_KEYS.JSONBIN_BIN_ID, binId);
 
   if (apiKey && binId) {
-    setCloudStatus('synced', '☁️ Nuvem Atualizada');
-    triggerCloudSync();
+    setCloudStatus('syncing', '☁️ Conectando...');
+    const isLocalEmpty = AppState.categories.length === 0 && AppState.transactions.length === 0;
+    if (isLocalEmpty) {
+      const wantDownload = window.confirm(
+        'Credenciais salvas com sucesso! Notamos que o seu aplicativo ainda está vazio localmente. Deseja baixar e restaurar seus dados da nuvem agora?'
+      );
+      if (wantDownload) {
+        syncFromCloud();
+        return;
+      }
+    } else {
+      showToast('Credenciais da nuvem guardadas com sucesso!', 'success');
+    }
+    checkAndSyncCloudOnStartup({ showNotification: true, force: true });
   } else {
-    setCloudStatus('disconnected', '☁️ Nuvem Atualizada');
+    setCloudStatus('disconnected', '☁️ Nuvem Desconectada');
+    showToast('Credenciais da nuvem guardadas com sucesso!', 'success');
   }
 
   updateLastUpdatedUI();
-  showToast('Credenciais da nuvem guardadas com sucesso!', 'success');
 }
 
 export async function syncToCloud() {
@@ -55,11 +96,11 @@ export async function syncToCloud() {
   let binId = (DOM.jsonbinBinId ? DOM.jsonbinBinId.value : '').trim();
 
   if (!apiKey) {
-    apiKey = localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '';
+    apiKey = getStoredString(STORAGE_KEYS.JSONBIN_KEY) || '';
     if (DOM.jsonbinApiKey && apiKey) DOM.jsonbinApiKey.value = apiKey;
   }
   if (!binId) {
-    binId = localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '';
+    binId = getStoredString(STORAGE_KEYS.JSONBIN_BIN_ID) || '';
     if (DOM.jsonbinBinId && binId) DOM.jsonbinBinId.value = binId;
   }
 
@@ -75,6 +116,21 @@ export async function syncToCloud() {
   }
   setCloudStatus('syncing', '🔄 A sincronizar...');
 
+  // Trava de segurança anti-sobrescrita acidental se a lista local estiver vazia
+  if (AppState.categories.length === 0 && AppState.transactions.length === 0) {
+    const confirmWipe = window.confirm(
+      'Atenção: A sua lista local de categorias e lançamentos está vazia. Enviar agora vai apagar tudo o que está guardado na nuvem. Deseja realmente sobrescrever a nuvem com dados vazios?'
+    );
+    if (!confirmWipe) {
+      setCloudStatus('synced', '☁️ Nuvem Atualizada');
+      if (DOM.btnSyncToCloud) {
+        DOM.btnSyncToCloud.disabled = false;
+        DOM.btnSyncToCloud.style.opacity = '';
+      }
+      return;
+    }
+  }
+
   try {
     if (binId) {
       try {
@@ -82,7 +138,8 @@ export async function syncToCloud() {
           method: 'GET',
           headers: {
             'X-Master-Key': apiKey
-          }
+          },
+          signal: getFetchSignal()
         });
 
         if (checkRes.ok) {
@@ -90,6 +147,17 @@ export async function syncToCloud() {
           const cloudRecord = checkData?.record || checkData;
           const cloudLastUpdated = Number(cloudRecord?.lastUpdated) || 0;
           const localLastUpdated = Number(AppState.lastUpdated) || 0;
+
+          const cloudCats = cloudRecord?.categorias || cloudRecord?.categories || [];
+          const cloudTrans = cloudRecord?.lancamentos || cloudRecord?.transactions || [];
+          const cloudHasData = (Array.isArray(cloudCats) && cloudCats.length > 0) || (Array.isArray(cloudTrans) && cloudTrans.length > 0);
+          const isLocalEmpty = AppState.categories.length === 0 && AppState.transactions.length === 0;
+
+          if (isLocalEmpty && cloudHasData) {
+            alert('Ação bloqueada por segurança: Seus dados locais estão vazios, mas a sua nuvem possui categorias e lançamentos salvos. Para evitar perda de dados, o upload foi cancelado. Se deseja carregar seus dados na tela, use o botão "Restaurar da Nuvem".');
+            setCloudStatus('synced', '☁️ Nuvem Atualizada');
+            return;
+          }
 
           if (cloudLastUpdated > localLastUpdated) {
             const forceUpload = window.confirm(
@@ -122,7 +190,8 @@ export async function syncToCloud() {
           'X-Master-Key': apiKey,
           'X-Bin-Name': 'FinancasPro_Backup'
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: getFetchSignal()
       });
 
       if (!response.ok) {
@@ -138,8 +207,8 @@ export async function syncToCloud() {
       }
 
       if (DOM.jsonbinBinId) DOM.jsonbinBinId.value = newBinId;
-      localStorage.setItem(STORAGE_KEYS.JSONBIN_KEY, apiKey);
-      localStorage.setItem(STORAGE_KEYS.JSONBIN_BIN_ID, newBinId);
+      setStoredString(STORAGE_KEYS.JSONBIN_KEY, apiKey);
+      setStoredString(STORAGE_KEYS.JSONBIN_BIN_ID, newBinId);
 
       touchLastUpdated(uploadTs);
       setCloudStatus('synced', '☁️ Nuvem Atualizada');
@@ -151,7 +220,8 @@ export async function syncToCloud() {
           'Content-Type': 'application/json',
           'X-Master-Key': apiKey
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: getFetchSignal()
       });
 
       if (!response.ok) {
@@ -159,8 +229,8 @@ export async function syncToCloud() {
         throw new Error(errorData.message || `Erro ${response.status} ao atualizar Bin no JSONBin.io`);
       }
 
-      localStorage.setItem(STORAGE_KEYS.JSONBIN_KEY, apiKey);
-      localStorage.setItem(STORAGE_KEYS.JSONBIN_BIN_ID, binId);
+      setStoredString(STORAGE_KEYS.JSONBIN_KEY, apiKey);
+      setStoredString(STORAGE_KEYS.JSONBIN_BIN_ID, binId);
 
       touchLastUpdated(uploadTs);
       setCloudStatus('synced', '☁️ Nuvem Atualizada');
@@ -183,11 +253,11 @@ export async function syncFromCloud() {
   let binId = (DOM.jsonbinBinId ? DOM.jsonbinBinId.value : '').trim();
 
   if (!apiKey) {
-    apiKey = localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '';
+    apiKey = getStoredString(STORAGE_KEYS.JSONBIN_KEY) || '';
     if (DOM.jsonbinApiKey && apiKey) DOM.jsonbinApiKey.value = apiKey;
   }
   if (!binId) {
-    binId = localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '';
+    binId = getStoredString(STORAGE_KEYS.JSONBIN_BIN_ID) || '';
     if (DOM.jsonbinBinId && binId) DOM.jsonbinBinId.value = binId;
   }
 
@@ -214,7 +284,8 @@ export async function syncFromCloud() {
       method: 'GET',
       headers: {
         'X-Master-Key': apiKey
-      }
+      },
+      signal: getFetchSignal()
     });
 
     if (!response.ok) {
@@ -351,7 +422,7 @@ export function areStatesEqual(localState, remoteRecord) {
 
   // Fingerprint dos lançamentos
   const transFingerprint = (list) => list.map(t => 
-    `${String(t.id || '')}|${Number(t.value || 0)}|${Number(t.monthIndex || 0)}|${Number(t.year || 0)}|${String(t.description || '').trim()}|${String(t.installment || '').trim()}|${Boolean(t.isPaid)}|${String(t.tag || '').trim()}|${String(t.groupId || '')}|${String(t.linkedId || '')}`
+    `${String(t.id || '')}|${Number(t.value || 0)}|${Number(t.monthIndex || 0)}|${Number(t.year || 0)}|${String(t.description || '').trim()}|${String(t.installment || '').trim()}|${Boolean(t.isPaid)}|${String(t.tag || '').trim()}|${String(t.groupId || '')}|${String(t.linkedId || '')}|${String(t.categoryId || '')}|${String(t.categoryName || '').trim().toLowerCase()}|${String(t.categoryType || '').trim().toLowerCase()}|${Boolean(t.isRevenue)}`
   ).sort().join(';;');
 
   return transFingerprint(localTrans) === transFingerprint(remoteTrans);
@@ -368,11 +439,11 @@ export function resetStartupSyncLock() {
  * Executada sempre ao abrir o SPA e ao retornar o foco à aba.
  */
 export async function checkAndSyncCloudOnStartup({ silent = true, showNotification = true, force = false } = {}) {
-  const apiKey = (localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
-  const binId = (localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
+  const apiKey = (getStoredString(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
+  const binId = (getStoredString(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
 
   if (!apiKey || !binId) {
-    setCloudStatus('disconnected', '☁️ Nuvem Atualizada');
+    setCloudStatus('disconnected', '☁️ Nuvem Desconectada');
     return { status: 'disconnected' };
   }
 
@@ -392,7 +463,8 @@ export async function checkAndSyncCloudOnStartup({ silent = true, showNotificati
       method: 'GET',
       headers: {
         'X-Master-Key': apiKey
-      }
+      },
+      signal: getFetchSignal()
     });
 
     if (!response.ok) {
@@ -481,7 +553,7 @@ export async function checkAndSyncCloudOnStartup({ silent = true, showNotificati
 
   } catch (err) {
     console.warn('[Cloud Startup Check] Modo offline ou erro de rede:', err);
-    setCloudStatus('synced', '☁️ Nuvem Atualizada');
+    setCloudStatus('error', '☁️ Modo Offline');
     return { status: 'offline', error: err };
   } finally {
     isCheckingStartupCloud = false;
@@ -512,10 +584,16 @@ export function setupCloudFocusListener() {
 }
 
 export async function executeAutoCloudSync() {
-  const apiKey = (localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
-  const binId = (localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
+  const apiKey = (getStoredString(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
+  const binId = (getStoredString(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
 
   if (!apiKey || !binId) {
+    return;
+  }
+
+  // Trava de segurança anti-sobrescrita: se o app local estiver vazio, NUNCA enviar automaticamente para a nuvem
+  if (AppState.categories.length === 0 && AppState.transactions.length === 0) {
+    console.warn('[AutoSync Abortado] Sessão local está vazia. Auto-save cancelado para proteger os dados da nuvem.');
     return;
   }
 
@@ -524,7 +602,8 @@ export async function executeAutoCloudSync() {
       method: 'GET',
       headers: {
         'X-Master-Key': apiKey
-      }
+      },
+      signal: getFetchSignal()
     });
 
     if (checkRes.ok) {
@@ -532,6 +611,17 @@ export async function executeAutoCloudSync() {
       const cloudRecord = checkData?.record || checkData;
       const cloudLastUpdated = Number(cloudRecord?.lastUpdated) || 0;
       const localLastUpdated = Number(AppState.lastUpdated) || 0;
+
+      const cloudCats = cloudRecord?.categorias || cloudRecord?.categories || [];
+      const cloudTrans = cloudRecord?.lancamentos || cloudRecord?.transactions || [];
+      const cloudHasData = (Array.isArray(cloudCats) && cloudCats.length > 0) || (Array.isArray(cloudTrans) && cloudTrans.length > 0);
+      const isLocalEmpty = AppState.categories.length === 0 && AppState.transactions.length === 0;
+
+      if (isLocalEmpty && cloudHasData) {
+        console.warn('[AutoSync Bloqueado] Nuvem possui dados e a sessão local está vazia. Auto-save cancelado para proteger a nuvem.');
+        setCloudStatus('synced', '☁️ Nuvem Atualizada');
+        return;
+      }
 
       if (cloudLastUpdated > localLastUpdated) {
         console.warn('[AutoSync Abortado] Nuvem possui dados mais recentes que a sessão local. Auto-save abortado para evitar perda de dados.');
@@ -556,7 +646,8 @@ export async function executeAutoCloudSync() {
         'Content-Type': 'application/json',
         'X-Master-Key': apiKey
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: getFetchSignal()
     });
 
     if (!response.ok) {
@@ -576,8 +667,8 @@ export async function executeAutoCloudSync() {
 export const debouncedAutoCloudSync = debounce(executeAutoCloudSync, 3000);
 
 export function triggerCloudSync() {
-  const apiKey = (localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
-  const binId = (localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
+  const apiKey = (getStoredString(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
+  const binId = (getStoredString(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
 
   if (!apiKey || !binId) {
     return;

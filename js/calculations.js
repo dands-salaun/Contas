@@ -303,6 +303,44 @@ export function deleteTransactionCascade(transactions = [], transactionId, shoul
 }
 
 /**
+ * Determina com precisão se uma transação pertence ao fluxo de 'Repasse',
+ * diferenciando-a categoricamente de receitas legítimas (Salário, Investimentos, etc.).
+ * 
+ * @param {Object} tx Lançamento a verificar
+ * @param {Array<Object>} transactions Lista de lançamentos para consulta de vínculos
+ * @returns {boolean}
+ */
+export function isRepasseTransaction(tx, transactions = []) {
+  if (!tx) return false;
+  const normType = tx.categoryType ? normalizeCategoryType(tx.categoryType) : null;
+  if (normType === 'Repasse') return true;
+  if (normType === 'Receita') return false;
+
+  if (typeof AppState !== 'undefined' && Array.isArray(AppState.categories)) {
+    const cat = AppState.categories.find(c => {
+      if (tx.categoryId) return c.id === tx.categoryId;
+      return c.name && (c.name.toLowerCase() === (tx.categoryName || '').toLowerCase());
+    });
+    if (cat && cat.type) {
+      const cType = normalizeCategoryType(cat.type);
+      if (cType === 'Repasse') return true;
+      if (cType === 'Receita') return false;
+    }
+  }
+
+  // Fallback: se possuir linkedId e a transação espelhada for do Cartão de Crédito
+  if (tx.linkedId && Array.isArray(transactions)) {
+    const other = transactions.find(o => o.linkedId === tx.linkedId && o.id !== tx.id);
+    if (other) {
+      const otherType = other.categoryType ? normalizeCategoryType(other.categoryType) : null;
+      if (otherType === 'Cartão de Crédito') return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * EDIÇÃO EM CASCATA COM SUPORTE A GROUPID E TRANSIÇÃO DE ANOS:
  * @param {Array<Object>} transactions Lista de lançamentos
  * @param {string} transactionId ID do lançamento a editar
@@ -323,7 +361,13 @@ export function updateTransactionCascade(transactions = [], transactionId, { des
       const norm = normalizeCategoryType(target.categoryType);
       isFixedOrVariable = (norm === 'Conta Fixa' || norm === 'Variável Prevista' || norm === 'Receita' || norm === 'Repasse');
     } else if (typeof AppState !== 'undefined' && Array.isArray(AppState.categories)) {
-      const cat = AppState.categories.find(c => c.name.toLowerCase() === (target.categoryName || '').toLowerCase());
+      const cat = AppState.categories.find(c => {
+        if (target.categoryId) return c.id === target.categoryId;
+        const matchName = c.name.toLowerCase() === (target.categoryName || '').toLowerCase();
+        if (!matchName) return false;
+        if (target.categoryType) return normalizeCategoryType(c.type) === normalizeCategoryType(target.categoryType);
+        return true;
+      });
       if (cat) {
         const norm = normalizeCategoryType(cat.type);
         isFixedOrVariable = (norm === 'Conta Fixa' || norm === 'Variável Prevista' || norm === 'Receita' || norm === 'Repasse');
@@ -337,6 +381,130 @@ export function updateTransactionCascade(transactions = [], transactionId, { des
 
   const primaryIdsToUpdate = new Set();
   const linkedUpdatesMap = new Map();
+
+  const isTargetRepasse = isRepasseTransaction(target, transactions);
+
+  let targetCleanBase = '';
+  let targetSuffix = '';
+  let targetFinalDesc = undefined;
+
+  if (description !== undefined) {
+    const rawDesc = String(description).trim();
+    if (isTargetRepasse) {
+      const suffixMatch = rawDesc.match(/\s*\(\s*[^)]+\s*\)$/);
+      if (suffixMatch) {
+        targetCleanBase = rawDesc.slice(0, rawDesc.length - suffixMatch[0].length).trim();
+        targetSuffix = suffixMatch[0];
+      } else {
+        targetCleanBase = rawDesc;
+        const oldMatch = (target.description || '').match(/\s*\(\s*[^)]+\s*\)$/);
+        targetSuffix = oldMatch ? oldMatch[0] : '';
+      }
+      targetFinalDesc = targetSuffix ? `${targetCleanBase}${targetSuffix}` : targetCleanBase;
+    } else {
+      targetCleanBase = rawDesc;
+      targetFinalDesc = rawDesc;
+    }
+  }
+
+  const newFractionMatch = installment !== undefined ? String(installment).trim().match(/^(\d+)\s*\/\s*(\d+)$/) : null;
+  const newP = newFractionMatch ? parseInt(newFractionMatch[1], 10) : null;
+  const newTotal = newFractionMatch ? parseInt(newFractionMatch[2], 10) : null;
+
+  if (newFractionMatch) {
+    if (newP <= 0 || newTotal <= 0) {
+      throw new Error('Os números da parcela devem ser maiores que zero.');
+    }
+    if (newP > newTotal) {
+      throw new Error('A parcela atual não pode ser maior que o total.');
+    }
+  }
+
+  // Se for uma conta avulsa sendo editada para parcelada com propagação
+  if (shouldPropagateToFuture && newFractionMatch && !target.groupId) {
+    target.groupId = 'grp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+  }
+
+  const pruneIds = new Set();
+  const newTransactionsToAdd = [];
+
+  if (shouldPropagateToFuture && newFractionMatch && target.groupId) {
+    let maxExistingP = newP;
+    transactions.forEach(t => {
+      if (t.groupId === target.groupId) {
+        const m = String(t.installment || '').match(/^(\d+)\s*\/\s*(\d+)$/);
+        if (m) {
+          const p = parseInt(m[1], 10);
+          if (p > maxExistingP) maxExistingP = p;
+          if (p > newTotal) {
+            pruneIds.add(t.id);
+            if (t.linkedId) {
+              const linkedMirror = transactions.find(mItem => mItem.linkedId === t.linkedId && mItem.id !== t.id);
+              if (linkedMirror) pruneIds.add(linkedMirror.id);
+            }
+          }
+        }
+      }
+    });
+
+    if (newTotal > maxExistingP) {
+      const targetMirror = target.linkedId ? transactions.find(t => t.linkedId === target.linkedId && t.id !== target.id) : null;
+      for (let p = maxExistingP + 1; p <= newTotal; p++) {
+        const offset = p - newP;
+        const itemMonth = (targetMonth + offset) % 12;
+        const itemYear = targetYear + Math.floor((targetMonth + offset) / 12);
+        const newLinkedId = targetMirror ? ('link_' + Date.now() + '_' + p + '_' + Math.random().toString(36).substring(2, 7)) : null;
+
+        const newTx = {
+          id: 'lanc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7) + '_' + p,
+          groupId: target.groupId,
+          linkedId: newLinkedId,
+          categoryId: target.categoryId || null,
+          categoryName: target.categoryName,
+          categoryType: target.categoryType,
+          year: itemYear,
+          monthIndex: itemMonth,
+          description: targetFinalDesc !== undefined ? targetFinalDesc : (description !== undefined ? description : target.description),
+          installment: `${p}/${newTotal}`,
+          value: value !== undefined ? Number(value) : target.value,
+          isPaid: false,
+          tag: tag !== undefined ? tag : target.tag,
+          ...(target.isRevenue !== undefined ? { isRevenue: target.isRevenue } : {})
+        };
+        newTransactionsToAdd.push(newTx);
+
+        if (targetMirror) {
+          let mirrorSuffix = targetSuffix;
+          if (!mirrorSuffix && targetMirror.description) {
+            const m = targetMirror.description.match(/\s*\(\s*[^)]+\s*\)$/);
+            if (m) mirrorSuffix = m[0];
+          }
+
+          const mirrorDesc = isTargetRepasse
+            ? targetCleanBase
+            : (mirrorSuffix ? `${targetCleanBase}${mirrorSuffix}` : (description !== undefined ? description : (targetMirror.description || newTx.description)));
+
+          const newMirrorTx = {
+            id: 'lanc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7) + '_mir_' + p,
+            groupId: targetMirror.groupId || target.groupId,
+            linkedId: newLinkedId,
+            categoryId: targetMirror.categoryId || null,
+            categoryName: targetMirror.categoryName,
+            categoryType: targetMirror.categoryType,
+            year: itemYear,
+            monthIndex: itemMonth,
+            description: mirrorDesc,
+            installment: `${p}/${newTotal}`,
+            value: value !== undefined ? Number(value) : target.value,
+            isPaid: false,
+            tag: tag !== undefined ? tag : target.tag,
+            ...(targetMirror.isRevenue !== undefined ? { isRevenue: targetMirror.isRevenue } : {})
+          };
+          newTransactionsToAdd.push(newMirrorTx);
+        }
+      }
+    }
+  }
 
   transactions.forEach(item => {
     let shouldUpdate = false;
@@ -354,30 +522,63 @@ export function updateTransactionCascade(transactions = [], transactionId, { des
       }
     }
 
-    if (shouldUpdate) {
+    if (shouldUpdate && !pruneIds.has(item.id)) {
       primaryIdsToUpdate.add(item.id);
+
+      let itemInstallmentToUse = item.installment;
+      if (item.id === target.id) {
+        itemInstallmentToUse = installment !== undefined ? installment : item.installment;
+      } else if (shouldPropagateToFuture && newFractionMatch) {
+        const itemFracMatch = String(item.installment || '').match(/^(\d+)\s*\/\s*(\d+)$/);
+        if (itemFracMatch) {
+          itemInstallmentToUse = `${itemFracMatch[1]}/${newTotal}`;
+        }
+      }
+
       if (item.linkedId) {
         linkedUpdatesMap.set(item.linkedId, {
           sourceId: item.id,
           value: value !== undefined ? Number(value) : item.value,
+          installment: itemInstallmentToUse,
           tag: tag !== undefined ? tag : item.tag,
-          newDescription: description !== undefined ? description : item.description
+          sourceIsRepasse: isTargetRepasse,
+          cleanBaseDescription: targetCleanBase,
+          targetSuffix: targetSuffix,
+          newDescription: targetFinalDesc !== undefined ? targetFinalDesc : item.description
         });
       }
     }
   });
 
   let updatedCount = 0;
-  const updatedTransactions = transactions.map(item => {
+  const updatedTransactions = [];
+
+  transactions.forEach(item => {
+    if (pruneIds.has(item.id)) {
+      return;
+    }
+
     if (primaryIdsToUpdate.has(item.id)) {
       updatedCount++;
-      return {
+      let itemInstallment = item.installment;
+      if (item.id === target.id) {
+        itemInstallment = installment !== undefined ? installment : item.installment;
+      } else if (shouldPropagateToFuture && newFractionMatch) {
+        const itemFracMatch = String(item.installment || '').match(/^(\d+)\s*\/\s*(\d+)$/);
+        if (itemFracMatch) {
+          itemInstallment = `${itemFracMatch[1]}/${newTotal}`;
+        }
+      }
+
+      updatedTransactions.push({
         ...item,
-        description: description !== undefined ? description : item.description,
+        groupId: target.groupId || item.groupId,
+        description: targetFinalDesc !== undefined ? targetFinalDesc : (description !== undefined ? description : item.description),
         value: value !== undefined ? Number(value) : item.value,
-        installment: (item.id === target.id && installment !== undefined) ? installment : item.installment,
+        installment: itemInstallment,
         tag: tag !== undefined ? tag : item.tag
-      };
+      });
+      return;
     }
 
     if (item.linkedId && linkedUpdatesMap.has(item.linkedId)) {
@@ -386,24 +587,78 @@ export function updateTransactionCascade(transactions = [], transactionId, { des
         updatedCount++;
         let newDesc = item.description;
         if (description !== undefined) {
-          const suffixMatch = item.description.match(/\s*\(\s*[^)]+\s*\)$/);
-          if (suffixMatch && updateData.newDescription) {
-            newDesc = `${updateData.newDescription}${suffixMatch[0]}`;
+          const isItemRepasse = isRepasseTransaction(item, transactions);
+
+          if (isItemRepasse) {
+            let suffix = updateData.targetSuffix;
+            if (!suffix) {
+              const oldMatch = (item.description || '').match(/\s*\(\s*[^)]+\s*\)$/);
+              suffix = oldMatch ? oldMatch[0] : '';
+            }
+            newDesc = suffix ? `${updateData.cleanBaseDescription}${suffix}` : updateData.cleanBaseDescription;
           } else {
-            newDesc = updateData.newDescription;
+            newDesc = updateData.cleanBaseDescription;
           }
         }
-        return {
+        updatedTransactions.push({
           ...item,
           description: newDesc,
           value: updateData.value,
+          installment: updateData.installment !== undefined ? updateData.installment : item.installment,
           tag: updateData.tag
-        };
+        });
+        return;
       }
     }
 
-    return item;
+    // Se pertence ao mesmo grupo de parcelamento mas ocorreu antes do mês editado, alinha o total de parcelas (denominador)
+    if (shouldPropagateToFuture && newFractionMatch && target.groupId && item.groupId === target.groupId) {
+      const pastFracMatch = String(item.installment || '').match(/^(\d+)\s*\/\s*(\d+)$/);
+      if (pastFracMatch && parseInt(pastFracMatch[2], 10) !== newTotal) {
+        updatedCount++;
+        const alignedInstallment = `${pastFracMatch[1]}/${newTotal}`;
+        updatedTransactions.push({
+          ...item,
+          installment: alignedInstallment
+        });
+
+        // Se tiver espelho vinculado no repasse, alinha também o denominador do espelho
+        if (item.linkedId) {
+          const mirror = transactions.find(m => m.linkedId === item.linkedId && m.id !== item.id);
+          if (mirror) {
+            const mFrac = String(mirror.installment || '').match(/^(\d+)\s*\/\s*(\d+)$/);
+            if (mFrac && parseInt(mFrac[2], 10) !== newTotal) {
+              // Será atualizado quando o loop alcançar o mirror
+            }
+          }
+        }
+        return;
+      }
+    }
+
+    // Se é um espelho de um item anterior cujo denominador precisa ser alinhado
+    if (shouldPropagateToFuture && newFractionMatch && item.linkedId) {
+      const mainTx = transactions.find(m => m.linkedId === item.linkedId && m.id !== item.id && target.groupId && m.groupId === target.groupId);
+      if (mainTx) {
+        const mFrac = String(item.installment || '').match(/^(\d+)\s*\/\s*(\d+)$/);
+        if (mFrac && parseInt(mFrac[2], 10) !== newTotal) {
+          updatedCount++;
+          updatedTransactions.push({
+            ...item,
+            installment: `${mFrac[1]}/${newTotal}`
+          });
+          return;
+        }
+      }
+    }
+
+    updatedTransactions.push(item);
   });
+
+  if (newTransactionsToAdd.length > 0) {
+    updatedTransactions.push(...newTransactionsToAdd);
+    updatedCount += newTransactionsToAdd.length;
+  }
 
   return {
     transactions: updatedTransactions,
@@ -438,13 +693,24 @@ export function calculateTotalsByMonthAndYear(transactions = [], categories = []
   const categoryTotals = new Map();
 
   const categoryTypeMap = new Map();
+  const categoryCompositeTypeMap = new Map();
   const categoryIdTypeMap = new Map();
-  if (Array.isArray(categories)) {
+  const validCategoryNames = new Set();
+  const validCategoryIds = new Set();
+  const hasCategoriesFilter = Array.isArray(categories) && categories.length > 0;
+
+  if (hasCategoriesFilter) {
     categories.forEach(c => {
       if (c && c.name) {
         const norm = normalizeCategoryType(c.type);
-        categoryTypeMap.set(c.name.trim().toLowerCase(), norm);
-        if (c.id) categoryIdTypeMap.set(c.id, norm);
+        const nameLower = c.name.trim().toLowerCase();
+        categoryTypeMap.set(nameLower, norm);
+        categoryCompositeTypeMap.set(`${nameLower}__${norm.toLowerCase()}`, norm);
+        validCategoryNames.add(nameLower);
+        if (c.id) {
+          categoryIdTypeMap.set(c.id, norm);
+          validCategoryIds.add(c.id);
+        }
       }
     });
   }
@@ -452,11 +718,22 @@ export function calculateTotalsByMonthAndYear(transactions = [], categories = []
   if (Array.isArray(transactions)) {
     transactions.forEach(t => {
       if (Number(t.monthIndex) === targetMonth && Number(t.year) === targetYear) {
-        totalLancamentos++;
         const catNameKey = (t.categoryName || '').trim().toLowerCase();
-        const type = t.categoryType 
-          ? normalizeCategoryType(t.categoryType) 
-          : (t.categoryId ? categoryIdTypeMap.get(t.categoryId) : null) || categoryTypeMap.get(catNameKey) || 'Conta Fixa';
+        const hasValidCategory = (t.categoryId && validCategoryIds.has(t.categoryId)) || validCategoryNames.has(catNameKey);
+
+        // Se uma lista de categorias foi fornecida, ignora lançamentos órfãos de categorias inexistentes
+        if (hasCategoriesFilter && !hasValidCategory) {
+          return;
+        }
+
+        totalLancamentos++;
+        const normTxType = t.categoryType ? normalizeCategoryType(t.categoryType) : null;
+        const compKey = normTxType ? `${catNameKey}__${normTxType.toLowerCase()}` : '';
+        const type = normTxType 
+          || (t.categoryId ? categoryIdTypeMap.get(t.categoryId) : null)
+          || (compKey ? categoryCompositeTypeMap.get(compKey) : null)
+          || categoryTypeMap.get(catNameKey) 
+          || 'Conta Fixa';
         const val = Number(t.value) || 0;
 
         const prevCatTotal = categoryTotals.get(catNameKey) || 0;

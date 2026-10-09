@@ -25,6 +25,7 @@ export const AppState = {
   selectedMonthIndex: mesSelecionado, // 0 a 11 (inicia no próximo mês)
   selectedYear: anoSelecionado,       // ex: 2026/2027 (com rollover de ano)
   editingTransactionId: null,        // id do lançamento em modo de edição
+  editingCategoryId: null,           // id da categoria em modo de edição
   selectedTypeFilters: new Set(),    // tipos selecionados no Drawer de Filtros
   tags: loadTags()                   // lista de tags/classificações
 };

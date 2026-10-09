@@ -94,6 +94,10 @@ const DOM = {
   get categoryForm() { return get('categoryForm'); },
   get categoryNameInput() { return get('categoryName'); },
   get categoryTypeSelect() { return get('categoryType'); },
+  get btnAddCategory() { return get('btnAddCategory'); },
+  get btnSubmitCategoryText() { return get('btnSubmitCategoryText'); },
+  get btnSubmitCategoryIcon() { return get('btnSubmitCategoryIcon'); },
+  get btnCancelEditCategory() { return get('btnCancelEditCategory'); },
   get categoryTableBody() { return get('categoryTableBody'); },
   get emptyState() { return get('emptyState'); },
   get categoryCountLabel() { return get('categoryCountLabel'); },
@@ -156,10 +160,8 @@ const DOM = {
   get btnOpenChartsModal() { return get('btnOpenChartsModal'); },
   get modalChartsOverlay() { return get('modalChartsOverlay'); },
   get btnCloseChartsModal() { return get('btnCloseChartsModal'); },
-  get btnDoneChartsModal() { return get('btnDoneChartsModal'); },
   get chartsModalSubtitle() { return get('chartsModalSubtitle'); },
   get chartMonthSelect() { return get('chartMonthSelect'); },
-  get btnChartPeriodMonth() { return get('btnChartPeriodMonth'); },
   get btnChartPeriodYear() { return get('btnChartPeriodYear'); },
   get btnChartGroupCategory() { return get('btnChartGroupCategory'); },
   get btnChartGroupType() { return get('btnChartGroupType'); },
@@ -248,6 +250,9 @@ function normalizeTransaction(item, idx = 0) {
  * SISTEMA FINANCEIRO - MOTOR DE ARMAZENAMENTO SEGURO & PERSISTÊNCIA
  * =============================================================================
  */
+
+
+
 
 
 let cloudSyncHook = null;
@@ -448,6 +453,7 @@ function saveTags(tags, skipTouch = false) {
  */
 
 
+
 const hoje = new Date();
 let mesSelecionado = hoje.getMonth() + 1;
 let anoSelecionado = hoje.getFullYear();
@@ -467,6 +473,7 @@ const AppState = {
   selectedMonthIndex: mesSelecionado, // 0 a 11 (inicia no próximo mês)
   selectedYear: anoSelecionado,       // ex: 2026/2027 (com rollover de ano)
   editingTransactionId: null,        // id do lançamento em modo de edição
+  editingCategoryId: null,           // id da categoria em modo de edição
   selectedTypeFilters: new Set(),    // tipos selecionados no Drawer de Filtros
   tags: loadTags()                   // lista de tags/classificações
 };
@@ -477,6 +484,8 @@ const AppState = {
  * SISTEMA FINANCEIRO - FEEDBACK VISUAL & UTILITÁRIOS
  * =============================================================================
  */
+
+
 
 
 function escapeHTML(str) {
@@ -655,6 +664,8 @@ function setCloudStatus(state, customText) {
  * Isolada do DOM - Altamente testável via testes unitários
  * =============================================================================
  */
+
+
 
 
 /**
@@ -952,6 +963,44 @@ function deleteTransactionCascade(transactions = [], transactionId, shouldDelete
 }
 
 /**
+ * Determina com precisão se uma transação pertence ao fluxo de 'Repasse',
+ * diferenciando-a categoricamente de receitas legítimas (Salário, Investimentos, etc.).
+ * 
+ * @param {Object} tx Lançamento a verificar
+ * @param {Array<Object>} transactions Lista de lançamentos para consulta de vínculos
+ * @returns {boolean}
+ */
+function isRepasseTransaction(tx, transactions = []) {
+  if (!tx) return false;
+  const normType = tx.categoryType ? normalizeCategoryType(tx.categoryType) : null;
+  if (normType === 'Repasse') return true;
+  if (normType === 'Receita') return false;
+
+  if (typeof AppState !== 'undefined' && Array.isArray(AppState.categories)) {
+    const cat = AppState.categories.find(c => {
+      if (tx.categoryId) return c.id === tx.categoryId;
+      return c.name && (c.name.toLowerCase() === (tx.categoryName || '').toLowerCase());
+    });
+    if (cat && cat.type) {
+      const cType = normalizeCategoryType(cat.type);
+      if (cType === 'Repasse') return true;
+      if (cType === 'Receita') return false;
+    }
+  }
+
+  // Fallback: se possuir linkedId e a transação espelhada for do Cartão de Crédito
+  if (tx.linkedId && Array.isArray(transactions)) {
+    const other = transactions.find(o => o.linkedId === tx.linkedId && o.id !== tx.id);
+    if (other) {
+      const otherType = other.categoryType ? normalizeCategoryType(other.categoryType) : null;
+      if (otherType === 'Cartão de Crédito') return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * EDIÇÃO EM CASCATA COM SUPORTE A GROUPID E TRANSIÇÃO DE ANOS:
  * @param {Array<Object>} transactions Lista de lançamentos
  * @param {string} transactionId ID do lançamento a editar
@@ -972,7 +1021,13 @@ function updateTransactionCascade(transactions = [], transactionId, { descriptio
       const norm = normalizeCategoryType(target.categoryType);
       isFixedOrVariable = (norm === 'Conta Fixa' || norm === 'Variável Prevista' || norm === 'Receita' || norm === 'Repasse');
     } else if (typeof AppState !== 'undefined' && Array.isArray(AppState.categories)) {
-      const cat = AppState.categories.find(c => c.name.toLowerCase() === (target.categoryName || '').toLowerCase());
+      const cat = AppState.categories.find(c => {
+        if (target.categoryId) return c.id === target.categoryId;
+        const matchName = c.name.toLowerCase() === (target.categoryName || '').toLowerCase();
+        if (!matchName) return false;
+        if (target.categoryType) return normalizeCategoryType(c.type) === normalizeCategoryType(target.categoryType);
+        return true;
+      });
       if (cat) {
         const norm = normalizeCategoryType(cat.type);
         isFixedOrVariable = (norm === 'Conta Fixa' || norm === 'Variável Prevista' || norm === 'Receita' || norm === 'Repasse');
@@ -986,6 +1041,130 @@ function updateTransactionCascade(transactions = [], transactionId, { descriptio
 
   const primaryIdsToUpdate = new Set();
   const linkedUpdatesMap = new Map();
+
+  const isTargetRepasse = isRepasseTransaction(target, transactions);
+
+  let targetCleanBase = '';
+  let targetSuffix = '';
+  let targetFinalDesc = undefined;
+
+  if (description !== undefined) {
+    const rawDesc = String(description).trim();
+    if (isTargetRepasse) {
+      const suffixMatch = rawDesc.match(/\s*\(\s*[^)]+\s*\)$/);
+      if (suffixMatch) {
+        targetCleanBase = rawDesc.slice(0, rawDesc.length - suffixMatch[0].length).trim();
+        targetSuffix = suffixMatch[0];
+      } else {
+        targetCleanBase = rawDesc;
+        const oldMatch = (target.description || '').match(/\s*\(\s*[^)]+\s*\)$/);
+        targetSuffix = oldMatch ? oldMatch[0] : '';
+      }
+      targetFinalDesc = targetSuffix ? `${targetCleanBase}${targetSuffix}` : targetCleanBase;
+    } else {
+      targetCleanBase = rawDesc;
+      targetFinalDesc = rawDesc;
+    }
+  }
+
+  const newFractionMatch = installment !== undefined ? String(installment).trim().match(/^(\d+)\s*\/\s*(\d+)$/) : null;
+  const newP = newFractionMatch ? parseInt(newFractionMatch[1], 10) : null;
+  const newTotal = newFractionMatch ? parseInt(newFractionMatch[2], 10) : null;
+
+  if (newFractionMatch) {
+    if (newP <= 0 || newTotal <= 0) {
+      throw new Error('Os números da parcela devem ser maiores que zero.');
+    }
+    if (newP > newTotal) {
+      throw new Error('A parcela atual não pode ser maior que o total.');
+    }
+  }
+
+  // Se for uma conta avulsa sendo editada para parcelada com propagação
+  if (shouldPropagateToFuture && newFractionMatch && !target.groupId) {
+    target.groupId = 'grp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+  }
+
+  const pruneIds = new Set();
+  const newTransactionsToAdd = [];
+
+  if (shouldPropagateToFuture && newFractionMatch && target.groupId) {
+    let maxExistingP = newP;
+    transactions.forEach(t => {
+      if (t.groupId === target.groupId) {
+        const m = String(t.installment || '').match(/^(\d+)\s*\/\s*(\d+)$/);
+        if (m) {
+          const p = parseInt(m[1], 10);
+          if (p > maxExistingP) maxExistingP = p;
+          if (p > newTotal) {
+            pruneIds.add(t.id);
+            if (t.linkedId) {
+              const linkedMirror = transactions.find(mItem => mItem.linkedId === t.linkedId && mItem.id !== t.id);
+              if (linkedMirror) pruneIds.add(linkedMirror.id);
+            }
+          }
+        }
+      }
+    });
+
+    if (newTotal > maxExistingP) {
+      const targetMirror = target.linkedId ? transactions.find(t => t.linkedId === target.linkedId && t.id !== target.id) : null;
+      for (let p = maxExistingP + 1; p <= newTotal; p++) {
+        const offset = p - newP;
+        const itemMonth = (targetMonth + offset) % 12;
+        const itemYear = targetYear + Math.floor((targetMonth + offset) / 12);
+        const newLinkedId = targetMirror ? ('link_' + Date.now() + '_' + p + '_' + Math.random().toString(36).substring(2, 7)) : null;
+
+        const newTx = {
+          id: 'lanc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7) + '_' + p,
+          groupId: target.groupId,
+          linkedId: newLinkedId,
+          categoryId: target.categoryId || null,
+          categoryName: target.categoryName,
+          categoryType: target.categoryType,
+          year: itemYear,
+          monthIndex: itemMonth,
+          description: targetFinalDesc !== undefined ? targetFinalDesc : (description !== undefined ? description : target.description),
+          installment: `${p}/${newTotal}`,
+          value: value !== undefined ? Number(value) : target.value,
+          isPaid: false,
+          tag: tag !== undefined ? tag : target.tag,
+          ...(target.isRevenue !== undefined ? { isRevenue: target.isRevenue } : {})
+        };
+        newTransactionsToAdd.push(newTx);
+
+        if (targetMirror) {
+          let mirrorSuffix = targetSuffix;
+          if (!mirrorSuffix && targetMirror.description) {
+            const m = targetMirror.description.match(/\s*\(\s*[^)]+\s*\)$/);
+            if (m) mirrorSuffix = m[0];
+          }
+
+          const mirrorDesc = isTargetRepasse
+            ? targetCleanBase
+            : (mirrorSuffix ? `${targetCleanBase}${mirrorSuffix}` : (description !== undefined ? description : (targetMirror.description || newTx.description)));
+
+          const newMirrorTx = {
+            id: 'lanc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7) + '_mir_' + p,
+            groupId: targetMirror.groupId || target.groupId,
+            linkedId: newLinkedId,
+            categoryId: targetMirror.categoryId || null,
+            categoryName: targetMirror.categoryName,
+            categoryType: targetMirror.categoryType,
+            year: itemYear,
+            monthIndex: itemMonth,
+            description: mirrorDesc,
+            installment: `${p}/${newTotal}`,
+            value: value !== undefined ? Number(value) : target.value,
+            isPaid: false,
+            tag: tag !== undefined ? tag : target.tag,
+            ...(targetMirror.isRevenue !== undefined ? { isRevenue: targetMirror.isRevenue } : {})
+          };
+          newTransactionsToAdd.push(newMirrorTx);
+        }
+      }
+    }
+  }
 
   transactions.forEach(item => {
     let shouldUpdate = false;
@@ -1003,30 +1182,63 @@ function updateTransactionCascade(transactions = [], transactionId, { descriptio
       }
     }
 
-    if (shouldUpdate) {
+    if (shouldUpdate && !pruneIds.has(item.id)) {
       primaryIdsToUpdate.add(item.id);
+
+      let itemInstallmentToUse = item.installment;
+      if (item.id === target.id) {
+        itemInstallmentToUse = installment !== undefined ? installment : item.installment;
+      } else if (shouldPropagateToFuture && newFractionMatch) {
+        const itemFracMatch = String(item.installment || '').match(/^(\d+)\s*\/\s*(\d+)$/);
+        if (itemFracMatch) {
+          itemInstallmentToUse = `${itemFracMatch[1]}/${newTotal}`;
+        }
+      }
+
       if (item.linkedId) {
         linkedUpdatesMap.set(item.linkedId, {
           sourceId: item.id,
           value: value !== undefined ? Number(value) : item.value,
+          installment: itemInstallmentToUse,
           tag: tag !== undefined ? tag : item.tag,
-          newDescription: description !== undefined ? description : item.description
+          sourceIsRepasse: isTargetRepasse,
+          cleanBaseDescription: targetCleanBase,
+          targetSuffix: targetSuffix,
+          newDescription: targetFinalDesc !== undefined ? targetFinalDesc : item.description
         });
       }
     }
   });
 
   let updatedCount = 0;
-  const updatedTransactions = transactions.map(item => {
+  const updatedTransactions = [];
+
+  transactions.forEach(item => {
+    if (pruneIds.has(item.id)) {
+      return;
+    }
+
     if (primaryIdsToUpdate.has(item.id)) {
       updatedCount++;
-      return {
+      let itemInstallment = item.installment;
+      if (item.id === target.id) {
+        itemInstallment = installment !== undefined ? installment : item.installment;
+      } else if (shouldPropagateToFuture && newFractionMatch) {
+        const itemFracMatch = String(item.installment || '').match(/^(\d+)\s*\/\s*(\d+)$/);
+        if (itemFracMatch) {
+          itemInstallment = `${itemFracMatch[1]}/${newTotal}`;
+        }
+      }
+
+      updatedTransactions.push({
         ...item,
-        description: description !== undefined ? description : item.description,
+        groupId: target.groupId || item.groupId,
+        description: targetFinalDesc !== undefined ? targetFinalDesc : (description !== undefined ? description : item.description),
         value: value !== undefined ? Number(value) : item.value,
-        installment: (item.id === target.id && installment !== undefined) ? installment : item.installment,
+        installment: itemInstallment,
         tag: tag !== undefined ? tag : item.tag
-      };
+      });
+      return;
     }
 
     if (item.linkedId && linkedUpdatesMap.has(item.linkedId)) {
@@ -1035,24 +1247,78 @@ function updateTransactionCascade(transactions = [], transactionId, { descriptio
         updatedCount++;
         let newDesc = item.description;
         if (description !== undefined) {
-          const suffixMatch = item.description.match(/\s*\(\s*[^)]+\s*\)$/);
-          if (suffixMatch && updateData.newDescription) {
-            newDesc = `${updateData.newDescription}${suffixMatch[0]}`;
+          const isItemRepasse = isRepasseTransaction(item, transactions);
+
+          if (isItemRepasse) {
+            let suffix = updateData.targetSuffix;
+            if (!suffix) {
+              const oldMatch = (item.description || '').match(/\s*\(\s*[^)]+\s*\)$/);
+              suffix = oldMatch ? oldMatch[0] : '';
+            }
+            newDesc = suffix ? `${updateData.cleanBaseDescription}${suffix}` : updateData.cleanBaseDescription;
           } else {
-            newDesc = updateData.newDescription;
+            newDesc = updateData.cleanBaseDescription;
           }
         }
-        return {
+        updatedTransactions.push({
           ...item,
           description: newDesc,
           value: updateData.value,
+          installment: updateData.installment !== undefined ? updateData.installment : item.installment,
           tag: updateData.tag
-        };
+        });
+        return;
       }
     }
 
-    return item;
+    // Se pertence ao mesmo grupo de parcelamento mas ocorreu antes do mês editado, alinha o total de parcelas (denominador)
+    if (shouldPropagateToFuture && newFractionMatch && target.groupId && item.groupId === target.groupId) {
+      const pastFracMatch = String(item.installment || '').match(/^(\d+)\s*\/\s*(\d+)$/);
+      if (pastFracMatch && parseInt(pastFracMatch[2], 10) !== newTotal) {
+        updatedCount++;
+        const alignedInstallment = `${pastFracMatch[1]}/${newTotal}`;
+        updatedTransactions.push({
+          ...item,
+          installment: alignedInstallment
+        });
+
+        // Se tiver espelho vinculado no repasse, alinha também o denominador do espelho
+        if (item.linkedId) {
+          const mirror = transactions.find(m => m.linkedId === item.linkedId && m.id !== item.id);
+          if (mirror) {
+            const mFrac = String(mirror.installment || '').match(/^(\d+)\s*\/\s*(\d+)$/);
+            if (mFrac && parseInt(mFrac[2], 10) !== newTotal) {
+              // Será atualizado quando o loop alcançar o mirror
+            }
+          }
+        }
+        return;
+      }
+    }
+
+    // Se é um espelho de um item anterior cujo denominador precisa ser alinhado
+    if (shouldPropagateToFuture && newFractionMatch && item.linkedId) {
+      const mainTx = transactions.find(m => m.linkedId === item.linkedId && m.id !== item.id && target.groupId && m.groupId === target.groupId);
+      if (mainTx) {
+        const mFrac = String(item.installment || '').match(/^(\d+)\s*\/\s*(\d+)$/);
+        if (mFrac && parseInt(mFrac[2], 10) !== newTotal) {
+          updatedCount++;
+          updatedTransactions.push({
+            ...item,
+            installment: `${mFrac[1]}/${newTotal}`
+          });
+          return;
+        }
+      }
+    }
+
+    updatedTransactions.push(item);
   });
+
+  if (newTransactionsToAdd.length > 0) {
+    updatedTransactions.push(...newTransactionsToAdd);
+    updatedCount += newTransactionsToAdd.length;
+  }
 
   return {
     transactions: updatedTransactions,
@@ -1087,13 +1353,24 @@ function calculateTotalsByMonthAndYear(transactions = [], categories = [], month
   const categoryTotals = new Map();
 
   const categoryTypeMap = new Map();
+  const categoryCompositeTypeMap = new Map();
   const categoryIdTypeMap = new Map();
-  if (Array.isArray(categories)) {
+  const validCategoryNames = new Set();
+  const validCategoryIds = new Set();
+  const hasCategoriesFilter = Array.isArray(categories) && categories.length > 0;
+
+  if (hasCategoriesFilter) {
     categories.forEach(c => {
       if (c && c.name) {
         const norm = normalizeCategoryType(c.type);
-        categoryTypeMap.set(c.name.trim().toLowerCase(), norm);
-        if (c.id) categoryIdTypeMap.set(c.id, norm);
+        const nameLower = c.name.trim().toLowerCase();
+        categoryTypeMap.set(nameLower, norm);
+        categoryCompositeTypeMap.set(`${nameLower}__${norm.toLowerCase()}`, norm);
+        validCategoryNames.add(nameLower);
+        if (c.id) {
+          categoryIdTypeMap.set(c.id, norm);
+          validCategoryIds.add(c.id);
+        }
       }
     });
   }
@@ -1101,11 +1378,22 @@ function calculateTotalsByMonthAndYear(transactions = [], categories = [], month
   if (Array.isArray(transactions)) {
     transactions.forEach(t => {
       if (Number(t.monthIndex) === targetMonth && Number(t.year) === targetYear) {
-        totalLancamentos++;
         const catNameKey = (t.categoryName || '').trim().toLowerCase();
-        const type = t.categoryType 
-          ? normalizeCategoryType(t.categoryType) 
-          : (t.categoryId ? categoryIdTypeMap.get(t.categoryId) : null) || categoryTypeMap.get(catNameKey) || 'Conta Fixa';
+        const hasValidCategory = (t.categoryId && validCategoryIds.has(t.categoryId)) || validCategoryNames.has(catNameKey);
+
+        // Se uma lista de categorias foi fornecida, ignora lançamentos órfãos de categorias inexistentes
+        if (hasCategoriesFilter && !hasValidCategory) {
+          return;
+        }
+
+        totalLancamentos++;
+        const normTxType = t.categoryType ? normalizeCategoryType(t.categoryType) : null;
+        const compKey = normTxType ? `${catNameKey}__${normTxType.toLowerCase()}` : '';
+        const type = normTxType 
+          || (t.categoryId ? categoryIdTypeMap.get(t.categoryId) : null)
+          || (compKey ? categoryCompositeTypeMap.get(compKey) : null)
+          || categoryTypeMap.get(catNameKey) 
+          || 'Conta Fixa';
         const val = Number(t.value) || 0;
 
         const prevCatTotal = categoryTotals.get(catNameKey) || 0;
@@ -1143,9 +1431,44 @@ function calculateTotalsByMonthAndYear(transactions = [], categories = [], month
  */
 
 
+
+
+
+
+
+
+function getStoredString(key) {
+  try {
+    const val = localStorage.getItem(key);
+    if (val !== null) return val;
+  } catch (e) {}
+  try {
+    const val = sessionStorage.getItem(key);
+    if (val !== null) return val;
+  } catch (e) {}
+  return '';
+}
+
+function setStoredString(key, val) {
+  const str = String(val || '');
+  try {
+    localStorage.setItem(key, str);
+  } catch (e) {}
+  try {
+    sessionStorage.setItem(key, str);
+  } catch (e) {}
+}
+
+function getFetchSignal(timeoutMs = 15000) {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(timeoutMs);
+  }
+  return undefined;
+}
+
 function loadCloudCredentials() {
-  const apiKey = (localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
-  const binId = (localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
+  const apiKey = (getStoredString(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
+  const binId = (getStoredString(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
 
   if (DOM.jsonbinApiKey && !DOM.jsonbinApiKey.value) {
     DOM.jsonbinApiKey.value = apiKey;
@@ -1155,9 +1478,9 @@ function loadCloudCredentials() {
   }
 
   if (apiKey && binId) {
-    setCloudStatus('synced', '☁️ Nuvem Atualizada');
+    setCloudStatus('syncing', '☁️ Conectando...');
   } else {
-    setCloudStatus('disconnected', '☁️ Nuvem Atualizada');
+    setCloudStatus('disconnected', '☁️ Nuvem Desconectada');
   }
 
   updateLastUpdatedUI();
@@ -1167,18 +1490,30 @@ function saveCloudCredentials() {
   const apiKey = (DOM.jsonbinApiKey ? DOM.jsonbinApiKey.value : '').trim();
   const binId = (DOM.jsonbinBinId ? DOM.jsonbinBinId.value : '').trim();
 
-  localStorage.setItem(STORAGE_KEYS.JSONBIN_KEY, apiKey);
-  localStorage.setItem(STORAGE_KEYS.JSONBIN_BIN_ID, binId);
+  setStoredString(STORAGE_KEYS.JSONBIN_KEY, apiKey);
+  setStoredString(STORAGE_KEYS.JSONBIN_BIN_ID, binId);
 
   if (apiKey && binId) {
-    setCloudStatus('synced', '☁️ Nuvem Atualizada');
-    triggerCloudSync();
+    setCloudStatus('syncing', '☁️ Conectando...');
+    const isLocalEmpty = AppState.categories.length === 0 && AppState.transactions.length === 0;
+    if (isLocalEmpty) {
+      const wantDownload = window.confirm(
+        'Credenciais salvas com sucesso! Notamos que o seu aplicativo ainda está vazio localmente. Deseja baixar e restaurar seus dados da nuvem agora?'
+      );
+      if (wantDownload) {
+        syncFromCloud();
+        return;
+      }
+    } else {
+      showToast('Credenciais da nuvem guardadas com sucesso!', 'success');
+    }
+    checkAndSyncCloudOnStartup({ showNotification: true, force: true });
   } else {
-    setCloudStatus('disconnected', '☁️ Nuvem Atualizada');
+    setCloudStatus('disconnected', '☁️ Nuvem Desconectada');
+    showToast('Credenciais da nuvem guardadas com sucesso!', 'success');
   }
 
   updateLastUpdatedUI();
-  showToast('Credenciais da nuvem guardadas com sucesso!', 'success');
 }
 
 async function syncToCloud() {
@@ -1186,11 +1521,11 @@ async function syncToCloud() {
   let binId = (DOM.jsonbinBinId ? DOM.jsonbinBinId.value : '').trim();
 
   if (!apiKey) {
-    apiKey = localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '';
+    apiKey = getStoredString(STORAGE_KEYS.JSONBIN_KEY) || '';
     if (DOM.jsonbinApiKey && apiKey) DOM.jsonbinApiKey.value = apiKey;
   }
   if (!binId) {
-    binId = localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '';
+    binId = getStoredString(STORAGE_KEYS.JSONBIN_BIN_ID) || '';
     if (DOM.jsonbinBinId && binId) DOM.jsonbinBinId.value = binId;
   }
 
@@ -1206,6 +1541,21 @@ async function syncToCloud() {
   }
   setCloudStatus('syncing', '🔄 A sincronizar...');
 
+  // Trava de segurança anti-sobrescrita acidental se a lista local estiver vazia
+  if (AppState.categories.length === 0 && AppState.transactions.length === 0) {
+    const confirmWipe = window.confirm(
+      'Atenção: A sua lista local de categorias e lançamentos está vazia. Enviar agora vai apagar tudo o que está guardado na nuvem. Deseja realmente sobrescrever a nuvem com dados vazios?'
+    );
+    if (!confirmWipe) {
+      setCloudStatus('synced', '☁️ Nuvem Atualizada');
+      if (DOM.btnSyncToCloud) {
+        DOM.btnSyncToCloud.disabled = false;
+        DOM.btnSyncToCloud.style.opacity = '';
+      }
+      return;
+    }
+  }
+
   try {
     if (binId) {
       try {
@@ -1213,7 +1563,8 @@ async function syncToCloud() {
           method: 'GET',
           headers: {
             'X-Master-Key': apiKey
-          }
+          },
+          signal: getFetchSignal()
         });
 
         if (checkRes.ok) {
@@ -1221,6 +1572,17 @@ async function syncToCloud() {
           const cloudRecord = checkData?.record || checkData;
           const cloudLastUpdated = Number(cloudRecord?.lastUpdated) || 0;
           const localLastUpdated = Number(AppState.lastUpdated) || 0;
+
+          const cloudCats = cloudRecord?.categorias || cloudRecord?.categories || [];
+          const cloudTrans = cloudRecord?.lancamentos || cloudRecord?.transactions || [];
+          const cloudHasData = (Array.isArray(cloudCats) && cloudCats.length > 0) || (Array.isArray(cloudTrans) && cloudTrans.length > 0);
+          const isLocalEmpty = AppState.categories.length === 0 && AppState.transactions.length === 0;
+
+          if (isLocalEmpty && cloudHasData) {
+            alert('Ação bloqueada por segurança: Seus dados locais estão vazios, mas a sua nuvem possui categorias e lançamentos salvos. Para evitar perda de dados, o upload foi cancelado. Se deseja carregar seus dados na tela, use o botão "Restaurar da Nuvem".');
+            setCloudStatus('synced', '☁️ Nuvem Atualizada');
+            return;
+          }
 
           if (cloudLastUpdated > localLastUpdated) {
             const forceUpload = window.confirm(
@@ -1253,7 +1615,8 @@ async function syncToCloud() {
           'X-Master-Key': apiKey,
           'X-Bin-Name': 'FinancasPro_Backup'
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: getFetchSignal()
       });
 
       if (!response.ok) {
@@ -1269,8 +1632,8 @@ async function syncToCloud() {
       }
 
       if (DOM.jsonbinBinId) DOM.jsonbinBinId.value = newBinId;
-      localStorage.setItem(STORAGE_KEYS.JSONBIN_KEY, apiKey);
-      localStorage.setItem(STORAGE_KEYS.JSONBIN_BIN_ID, newBinId);
+      setStoredString(STORAGE_KEYS.JSONBIN_KEY, apiKey);
+      setStoredString(STORAGE_KEYS.JSONBIN_BIN_ID, newBinId);
 
       touchLastUpdated(uploadTs);
       setCloudStatus('synced', '☁️ Nuvem Atualizada');
@@ -1282,7 +1645,8 @@ async function syncToCloud() {
           'Content-Type': 'application/json',
           'X-Master-Key': apiKey
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: getFetchSignal()
       });
 
       if (!response.ok) {
@@ -1290,8 +1654,8 @@ async function syncToCloud() {
         throw new Error(errorData.message || `Erro ${response.status} ao atualizar Bin no JSONBin.io`);
       }
 
-      localStorage.setItem(STORAGE_KEYS.JSONBIN_KEY, apiKey);
-      localStorage.setItem(STORAGE_KEYS.JSONBIN_BIN_ID, binId);
+      setStoredString(STORAGE_KEYS.JSONBIN_KEY, apiKey);
+      setStoredString(STORAGE_KEYS.JSONBIN_BIN_ID, binId);
 
       touchLastUpdated(uploadTs);
       setCloudStatus('synced', '☁️ Nuvem Atualizada');
@@ -1314,11 +1678,11 @@ async function syncFromCloud() {
   let binId = (DOM.jsonbinBinId ? DOM.jsonbinBinId.value : '').trim();
 
   if (!apiKey) {
-    apiKey = localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '';
+    apiKey = getStoredString(STORAGE_KEYS.JSONBIN_KEY) || '';
     if (DOM.jsonbinApiKey && apiKey) DOM.jsonbinApiKey.value = apiKey;
   }
   if (!binId) {
-    binId = localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '';
+    binId = getStoredString(STORAGE_KEYS.JSONBIN_BIN_ID) || '';
     if (DOM.jsonbinBinId && binId) DOM.jsonbinBinId.value = binId;
   }
 
@@ -1345,7 +1709,8 @@ async function syncFromCloud() {
       method: 'GET',
       headers: {
         'X-Master-Key': apiKey
-      }
+      },
+      signal: getFetchSignal()
     });
 
     if (!response.ok) {
@@ -1482,7 +1847,7 @@ function areStatesEqual(localState, remoteRecord) {
 
   // Fingerprint dos lançamentos
   const transFingerprint = (list) => list.map(t => 
-    `${String(t.id || '')}|${Number(t.value || 0)}|${Number(t.monthIndex || 0)}|${Number(t.year || 0)}|${String(t.description || '').trim()}|${String(t.installment || '').trim()}|${Boolean(t.isPaid)}|${String(t.tag || '').trim()}|${String(t.groupId || '')}|${String(t.linkedId || '')}`
+    `${String(t.id || '')}|${Number(t.value || 0)}|${Number(t.monthIndex || 0)}|${Number(t.year || 0)}|${String(t.description || '').trim()}|${String(t.installment || '').trim()}|${Boolean(t.isPaid)}|${String(t.tag || '').trim()}|${String(t.groupId || '')}|${String(t.linkedId || '')}|${String(t.categoryId || '')}|${String(t.categoryName || '').trim().toLowerCase()}|${String(t.categoryType || '').trim().toLowerCase()}|${Boolean(t.isRevenue)}`
   ).sort().join(';;');
 
   return transFingerprint(localTrans) === transFingerprint(remoteTrans);
@@ -1499,11 +1864,11 @@ function resetStartupSyncLock() {
  * Executada sempre ao abrir o SPA e ao retornar o foco à aba.
  */
 async function checkAndSyncCloudOnStartup({ silent = true, showNotification = true, force = false } = {}) {
-  const apiKey = (localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
-  const binId = (localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
+  const apiKey = (getStoredString(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
+  const binId = (getStoredString(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
 
   if (!apiKey || !binId) {
-    setCloudStatus('disconnected', '☁️ Nuvem Atualizada');
+    setCloudStatus('disconnected', '☁️ Nuvem Desconectada');
     return { status: 'disconnected' };
   }
 
@@ -1523,7 +1888,8 @@ async function checkAndSyncCloudOnStartup({ silent = true, showNotification = tr
       method: 'GET',
       headers: {
         'X-Master-Key': apiKey
-      }
+      },
+      signal: getFetchSignal()
     });
 
     if (!response.ok) {
@@ -1612,7 +1978,7 @@ async function checkAndSyncCloudOnStartup({ silent = true, showNotification = tr
 
   } catch (err) {
     console.warn('[Cloud Startup Check] Modo offline ou erro de rede:', err);
-    setCloudStatus('synced', '☁️ Nuvem Atualizada');
+    setCloudStatus('error', '☁️ Modo Offline');
     return { status: 'offline', error: err };
   } finally {
     isCheckingStartupCloud = false;
@@ -1643,10 +2009,16 @@ function setupCloudFocusListener() {
 }
 
 async function executeAutoCloudSync() {
-  const apiKey = (localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
-  const binId = (localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
+  const apiKey = (getStoredString(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
+  const binId = (getStoredString(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
 
   if (!apiKey || !binId) {
+    return;
+  }
+
+  // Trava de segurança anti-sobrescrita: se o app local estiver vazio, NUNCA enviar automaticamente para a nuvem
+  if (AppState.categories.length === 0 && AppState.transactions.length === 0) {
+    console.warn('[AutoSync Abortado] Sessão local está vazia. Auto-save cancelado para proteger os dados da nuvem.');
     return;
   }
 
@@ -1655,7 +2027,8 @@ async function executeAutoCloudSync() {
       method: 'GET',
       headers: {
         'X-Master-Key': apiKey
-      }
+      },
+      signal: getFetchSignal()
     });
 
     if (checkRes.ok) {
@@ -1663,6 +2036,17 @@ async function executeAutoCloudSync() {
       const cloudRecord = checkData?.record || checkData;
       const cloudLastUpdated = Number(cloudRecord?.lastUpdated) || 0;
       const localLastUpdated = Number(AppState.lastUpdated) || 0;
+
+      const cloudCats = cloudRecord?.categorias || cloudRecord?.categories || [];
+      const cloudTrans = cloudRecord?.lancamentos || cloudRecord?.transactions || [];
+      const cloudHasData = (Array.isArray(cloudCats) && cloudCats.length > 0) || (Array.isArray(cloudTrans) && cloudTrans.length > 0);
+      const isLocalEmpty = AppState.categories.length === 0 && AppState.transactions.length === 0;
+
+      if (isLocalEmpty && cloudHasData) {
+        console.warn('[AutoSync Bloqueado] Nuvem possui dados e a sessão local está vazia. Auto-save cancelado para proteger a nuvem.');
+        setCloudStatus('synced', '☁️ Nuvem Atualizada');
+        return;
+      }
 
       if (cloudLastUpdated > localLastUpdated) {
         console.warn('[AutoSync Abortado] Nuvem possui dados mais recentes que a sessão local. Auto-save abortado para evitar perda de dados.');
@@ -1687,7 +2071,8 @@ async function executeAutoCloudSync() {
         'Content-Type': 'application/json',
         'X-Master-Key': apiKey
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: getFetchSignal()
     });
 
     if (!response.ok) {
@@ -1707,8 +2092,8 @@ async function executeAutoCloudSync() {
 const debouncedAutoCloudSync = debounce(executeAutoCloudSync, 3000);
 
 function triggerCloudSync() {
-  const apiKey = (localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
-  const binId = (localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
+  const apiKey = (getStoredString(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
+  const binId = (getStoredString(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
 
   if (!apiKey || !binId) {
     return;
@@ -1727,6 +2112,8 @@ setCloudSyncHook(triggerCloudSync);
  * SISTEMA FINANCEIRO - ROTEADOR SPA (SINGLE PAGE APPLICATION)
  * =============================================================================
  */
+
+
 
 
 function closeMobileSidebar() {
@@ -1825,6 +2212,12 @@ function navigateTo(route, categoryId = null) {
  * SISTEMA FINANCEIRO - SIDEBAR DINÂMICA
  * =============================================================================
  */
+
+
+
+
+
+
 
 
 function rebuildSidebar() {
@@ -1930,6 +2323,109 @@ function rebuildSidebar() {
  */
 
 
+
+
+
+
+
+
+
+
+
+/**
+ * Retorna as categorias ativas no Dashboard de acordo com os filtros selecionados no Drawer.
+ * Se nenhum filtro estiver ativo, retorna todas as categorias.
+ * @returns {Array<Object>}
+ */
+function getFilteredCategoriesForDashboard() {
+  const selectedTypes = AppState.selectedTypeFilters;
+  if (!selectedTypes || selectedTypes.size === 0) {
+    return AppState.categories;
+  }
+  return AppState.categories.filter(c => {
+    const norm = normalizeCategoryType(c.type);
+    const isCustom = !CATEGORY_TYPES.some(t => normalizeCategoryType(c.type) === t.id);
+    return selectedTypes.has(norm) || (isCustom && selectedTypes.has('Outras Despesas'));
+  });
+}
+
+/**
+ * Renderiza os 4 cartões de métricas do topo do Dashboard considerando os filtros ativos.
+ * @param {number} currentMonth
+ * @param {number} currentYear
+ * @returns {Object} Resumo com os totais calculados
+ */
+function renderDashboardMetrics(currentMonth, currentYear) {
+  const monthName = MONTH_NAMES[currentMonth];
+  const isFiltered = Boolean(AppState.selectedTypeFilters && AppState.selectedTypeFilters.size > 0);
+  const filteredCategories = getFilteredCategoriesForDashboard();
+
+  let summary;
+  if (isFiltered && filteredCategories.length === 0) {
+    summary = {
+      totalReceitas: 0,
+      totalDespesas: 0,
+      saldoPrevisto: 0,
+      totalLancamentos: 0,
+      categoryTotals: new Map()
+    };
+  } else {
+    summary = calculateTotalsByMonthAndYear(AppState.transactions, filteredCategories, currentMonth, currentYear);
+  }
+
+  if (DOM.dashboardMetrics) {
+    DOM.dashboardMetrics.innerHTML = `
+      <div class="metric-card">
+        <div class="metric-card-header">
+          <span class="metric-card-title">Total de Receitas</span>
+          <span class="badge badge-receita">${monthName}/${currentYear}</span>
+        </div>
+        <div class="metric-card-val" style="color: var(--success);">${formatCurrency(summary.totalReceitas)}</div>
+        <div class="metric-card-sub">${isFiltered ? 'Entradas nos tipos filtrados' : 'Entradas no período'}</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card-header">
+          <span class="metric-card-title">Total de Despesas</span>
+          <span class="badge badge-fixa">${monthName}/${currentYear}</span>
+        </div>
+        <div class="metric-card-val" style="color: var(--danger);">${formatCurrency(summary.totalDespesas)}</div>
+        <div class="metric-card-sub">${isFiltered ? 'Despesas nos tipos filtrados' : 'Contas, cartões e variáveis'}</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card-header">
+          <span class="metric-card-title">Saldo Previsto</span>
+          <span class="badge ${summary.saldoPrevisto >= 0 ? 'badge-receita' : 'badge-fixa'}">${monthName}/${currentYear}</span>
+        </div>
+        <div class="metric-card-val" style="color: ${summary.saldoPrevisto >= 0 ? 'var(--success)' : 'var(--danger)'};">
+          ${formatCurrency(summary.saldoPrevisto)}
+        </div>
+        <div class="metric-card-sub">${isFiltered ? 'Saldo dos tipos filtrados' : 'Receitas - Despesas'}</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card-header">
+          <span class="metric-card-title">Lançamentos</span>
+          <span class="badge badge-variavel">${monthName}/${currentYear}</span>
+        </div>
+        <div class="metric-card-val">${summary.totalLancamentos}</div>
+        <div class="metric-card-sub">${isFiltered ? 'Itens nos tipos filtrados' : 'Itens no mês e ano selecionados'}</div>
+      </div>
+    `;
+  }
+
+  if (DOM.dashCategoryCount) {
+    if (isFiltered) {
+      DOM.dashCategoryCount.textContent = `${filteredCategories.length} de ${AppState.categories.length} categorias (${AppState.selectedTypeFilters.size} tipos filtrados)`;
+    } else {
+      DOM.dashCategoryCount.textContent = `${AppState.categories.length} ${AppState.categories.length === 1 ? 'categoria cadastrada' : 'categorias cadastradas'}`;
+    }
+  }
+
+  return summary;
+}
+
 function renderDashboard() {
   const currentMonth = Number(AppState.selectedMonthIndex);
   const currentYear = Number(AppState.selectedYear);
@@ -1952,53 +2448,7 @@ function renderDashboard() {
   }
 
   // 1. Métricas do Topo
-  const summary = calculateTotalsByMonthAndYear(AppState.transactions, AppState.categories, currentMonth, currentYear);
-
-  if (DOM.dashboardMetrics) {
-    DOM.dashboardMetrics.innerHTML = `
-      <div class="metric-card">
-        <div class="metric-card-header">
-          <span class="metric-card-title">Total de Receitas</span>
-          <span class="badge badge-receita">${monthName}/${currentYear}</span>
-        </div>
-        <div class="metric-card-val" style="color: var(--success);">${formatCurrency(summary.totalReceitas)}</div>
-        <div class="metric-card-sub">Entradas no período</div>
-      </div>
-
-      <div class="metric-card">
-        <div class="metric-card-header">
-          <span class="metric-card-title">Total de Despesas</span>
-          <span class="badge badge-fixa">${monthName}/${currentYear}</span>
-        </div>
-        <div class="metric-card-val" style="color: var(--danger);">${formatCurrency(summary.totalDespesas)}</div>
-        <div class="metric-card-sub">Contas, cartões e variáveis</div>
-      </div>
-
-      <div class="metric-card">
-        <div class="metric-card-header">
-          <span class="metric-card-title">Saldo Previsto</span>
-          <span class="badge ${summary.saldoPrevisto >= 0 ? 'badge-receita' : 'badge-fixa'}">${monthName}/${currentYear}</span>
-        </div>
-        <div class="metric-card-val" style="color: ${summary.saldoPrevisto >= 0 ? 'var(--success)' : 'var(--danger)'};">
-          ${formatCurrency(summary.saldoPrevisto)}
-        </div>
-        <div class="metric-card-sub">Receitas - Despesas</div>
-      </div>
-
-      <div class="metric-card">
-        <div class="metric-card-header">
-          <span class="metric-card-title">Lançamentos</span>
-          <span class="badge badge-variavel">${monthName}/${currentYear}</span>
-        </div>
-        <div class="metric-card-val">${summary.totalLancamentos}</div>
-        <div class="metric-card-sub">Itens no mês e ano selecionados</div>
-      </div>
-    `;
-  }
-
-  if (DOM.dashCategoryCount) {
-    DOM.dashCategoryCount.textContent = `${AppState.categories.length} ${AppState.categories.length === 1 ? 'categoria cadastrada' : 'categorias cadastradas'}`;
-  }
+  renderDashboardMetrics(currentMonth, currentYear);
 
   // 2. Renderiza as Tabelas no formato Planilha
   renderDashboardTables(currentMonth, currentYear);
@@ -2089,7 +2539,10 @@ function renderSpreadsheetBlock(typeId, groupTitle, categories, isRevenue, curre
 
   categories.forEach(cat => {
     const catTransactions = AppState.transactions.filter(t => {
-      const matchCat = t.categoryId ? (t.categoryId === cat.id) : (t.categoryName.trim().toLowerCase() === cat.name.trim().toLowerCase());
+      const matchCat = t.categoryId 
+        ? (t.categoryId === cat.id) 
+        : (t.categoryName.trim().toLowerCase() === cat.name.trim().toLowerCase() &&
+           (t.categoryType ? normalizeCategoryType(t.categoryType) === normalizeCategoryType(cat.type) : true));
       return matchCat && Number(t.monthIndex) === currentMonth && Number(t.year) === currentYear;
     });
 
@@ -2265,6 +2718,10 @@ function applyTypeFilters() {
       }
     }
   });
+
+  const currentMonth = Number(AppState.selectedMonthIndex);
+  const currentYear = Number(AppState.selectedYear);
+  renderDashboardMetrics(currentMonth, currentYear);
 }
 
 /**
@@ -2310,6 +2767,11 @@ function closeFiltersDrawer() {
  */
 
 
+
+
+
+
+
 const CHART_PALETTE = [
   '#3b82f6', // Azul (Primary)
   '#ef4444', // Vermelho (Danger)
@@ -2331,6 +2793,40 @@ let currentGroupMode = 'category'; // 'category' | 'type' | 'tag'
 /**
  * Calcula dados agregados de despesas para renderização gráfica
  */
+function createCategoryResolver(categories = []) {
+  const catIdMap = new Map();
+  const catCompositeMap = new Map();
+  const catNameMap = new Map();
+
+  (categories || []).forEach(c => {
+    if (c.id) catIdMap.set(String(c.id), c);
+    if (c.name) {
+      const nameKey = String(c.name).trim().toLowerCase();
+      const typeKey = normalizeCategoryType(c.type).toLowerCase();
+      catCompositeMap.set(`${nameKey}__${typeKey}`, c);
+      if (!catNameMap.has(nameKey)) {
+        catNameMap.set(nameKey, c);
+      }
+    }
+  });
+
+  return (t) => {
+    if (t.categoryId && catIdMap.has(String(t.categoryId))) {
+      return catIdMap.get(String(t.categoryId));
+    }
+    if (t.categoryName) {
+      const nameKey = String(t.categoryName).trim().toLowerCase();
+      if (t.categoryType) {
+        const typeKey = normalizeCategoryType(t.categoryType).toLowerCase();
+        const comp = catCompositeMap.get(`${nameKey}__${typeKey}`);
+        if (comp) return comp;
+      }
+      return catNameMap.get(nameKey) || null;
+    }
+    return null;
+  };
+}
+
 function calculateExpensesChartData(transactions, categories, {
   periodMode = 'month',
   groupMode = 'category',
@@ -2339,13 +2835,7 @@ function calculateExpensesChartData(transactions, categories, {
 } = {}) {
   const targetYear = Number(year);
   const targetMonth = Number(monthIndex);
-
-  // Mapeamento de categorias para identificar tipo e receitas
-  const catMap = new Map();
-  (categories || []).forEach(c => {
-    if (c.id) catMap.set(String(c.id), c);
-    if (c.name) catMap.set(String(c.name).trim().toLowerCase(), c);
-  });
+  const resolveCategory = createCategoryResolver(categories);
 
   // Filtra transações do ano e (opcionalmente) do mês selecionado
   const filtered = (transactions || []).filter(t => {
@@ -2353,16 +2843,17 @@ function calculateExpensesChartData(transactions, categories, {
     if (periodMode === 'month' && Number(t.monthIndex) !== targetMonth) return false;
 
     const val = Number(t.value) || 0;
-    if (val <= 0) return false;
+    if (val === 0) return false;
 
-    const cat = catMap.get(String(t.categoryId || '')) ||
-      (t.categoryName ? catMap.get(String(t.categoryName).trim().toLowerCase()) : null);
+    const cat = resolveCategory(t);
+    const rawType = cat ? cat.type : t.categoryType;
+    const normType = rawType ? normalizeCategoryType(rawType) : null;
+    const typeConfig = normType ? CATEGORY_TYPES.find(ct => ct.id === normType) : null;
+    const isRev = typeConfig 
+      ? Boolean(typeConfig.isRevenue) 
+      : Boolean(t.isRevenue === true || normType === 'Receita' || normType === 'Repasse');
 
-    if (cat) {
-      const typeConfig = CATEGORY_TYPES.find(ct => ct.id === cat.type);
-      // Ignora receitas e repasses (isRevenue: true)
-      if (typeConfig && typeConfig.isRevenue) return false;
-    }
+    if (isRev) return false;
     return true;
   });
 
@@ -2371,8 +2862,7 @@ function calculateExpensesChartData(transactions, categories, {
 
   filtered.forEach(t => {
     const val = Number(t.value) || 0;
-    const cat = catMap.get(String(t.categoryId || '')) ||
-      (t.categoryName ? catMap.get(String(t.categoryName).trim().toLowerCase()) : null);
+    const cat = resolveCategory(t);
 
     let key = '';
     let label = '';
@@ -2381,8 +2871,10 @@ function calculateExpensesChartData(transactions, categories, {
       key = cat ? String(cat.id) : (t.categoryName ? String(t.categoryName).trim() : 'Outros');
       label = cat ? cat.name : (t.categoryName ? String(t.categoryName).trim() : 'Outros');
     } else if (groupMode === 'type') {
-      key = cat ? String(cat.type) : 'Outros';
-      label = cat ? cat.type : 'Outros';
+      const rawType = cat ? cat.type : t.categoryType;
+      const normType = rawType ? normalizeCategoryType(rawType) : 'Outras Despesas';
+      key = normType;
+      label = normType;
     } else if (groupMode === 'tag') {
       const rawTag = (t.tag && typeof t.tag === 'string') ? t.tag.trim() : '';
       key = rawTag || 'Sem Classificação';
@@ -2395,13 +2887,27 @@ function calculateExpensesChartData(transactions, categories, {
     groups.get(key).total += val;
   });
 
-  // Converte para lista ordenada por maior valor
-  const items = Array.from(groups.values()).sort((a, b) => b.total - a.total);
-  const totalExpenses = items.reduce((acc, curr) => acc + curr.total, 0);
+  // Arredonda os totais dos grupos a 2 casas decimais
+  groups.forEach(g => {
+    g.total = Math.round(g.total * 100) / 100;
+  });
 
-  // Calcula percentuais e cores
+  // Total líquido de todas as despesas computadas (incluindo estornos e saldos negativos)
+  const allGroupsRawTotal = Array.from(groups.values()).reduce((acc, curr) => acc + curr.total, 0);
+  const totalExpenses = Math.max(Math.round(allGroupsRawTotal * 100) / 100, 0);
+
+  // Converte para lista ordenada por maior valor positivo (itens com saldo <= 0 não ocupam fatia positiva no Donut)
+  const items = Array.from(groups.values())
+    .filter(g => g.total > 0)
+    .sort((a, b) => b.total - a.total);
+
+  // Base para distribuição das fatias da rosca e barras de progresso (soma das despesas positivas)
+  const positiveGrossTotal = items.reduce((acc, curr) => acc + curr.total, 0);
+  const baseForDistribution = positiveGrossTotal > 0 ? positiveGrossTotal : totalExpenses;
+
+  // Calcula percentuais e cores garantindo limite de 100%
   items.forEach((item, idx) => {
-    item.percentage = totalExpenses > 0 ? (item.total / totalExpenses) * 100 : 0;
+    item.percentage = baseForDistribution > 0 ? Math.min((item.total / baseForDistribution) * 100, 100) : 0;
     item.color = CHART_PALETTE[idx % CHART_PALETTE.length];
   });
 
@@ -2421,11 +2927,7 @@ function calculateExpensesChartData(transactions, categories, {
  */
 function calculateMonthlyEvolutionData(transactions, categories, year = AppState.selectedYear) {
   const targetYear = Number(year);
-  const catMap = new Map();
-  (categories || []).forEach(c => {
-    if (c.id) catMap.set(String(c.id), c);
-    if (c.name) catMap.set(String(c.name).trim().toLowerCase(), c);
-  });
+  const resolveCategory = createCategoryResolver(categories);
 
   const monthlyTotals = Array.from({ length: 12 }, (_, i) => ({
     monthIndex: i,
@@ -2441,18 +2943,26 @@ function calculateMonthlyEvolutionData(transactions, categories, year = AppState
     if (m < 0 || m > 11) return;
 
     const val = Number(t.value) || 0;
-    if (val <= 0) return;
+    if (val === 0) return;
 
-    const cat = catMap.get(String(t.categoryId || '')) ||
-      (t.categoryName ? catMap.get(String(t.categoryName).trim().toLowerCase()) : null);
-    const typeConfig = cat ? CATEGORY_TYPES.find(ct => ct.id === cat.type) : null;
-    const isRev = typeConfig ? typeConfig.isRevenue : false;
+    const cat = resolveCategory(t);
+    const rawType = cat ? cat.type : t.categoryType;
+    const normType = rawType ? normalizeCategoryType(rawType) : null;
+    const typeConfig = normType ? CATEGORY_TYPES.find(ct => ct.id === normType) : null;
+    const isRev = typeConfig 
+      ? Boolean(typeConfig.isRevenue) 
+      : Boolean(t.isRevenue === true || normType === 'Receita' || normType === 'Repasse');
 
     if (isRev) {
       monthlyTotals[m].revenues += val;
     } else {
       monthlyTotals[m].expenses += val;
     }
+  });
+
+  monthlyTotals.forEach(m => {
+    m.expenses = Math.round(Math.max(m.expenses, 0) * 100) / 100;
+    m.revenues = Math.round(Math.max(m.revenues, 0) * 100) / 100;
   });
 
   const maxExpense = Math.max(...monthlyTotals.map(m => m.expenses), 1);
@@ -2485,10 +2995,14 @@ function renderDonutChartSVG(items, totalExpenses) {
   }
 
   let accumulatedDash = 0;
+  const positiveGrossTotal = items.reduce((acc, curr) => acc + curr.total, 0);
+  const baseForSlices = positiveGrossTotal > 0 ? positiveGrossTotal : totalExpenses;
+
   const slices = items.map((item, idx) => {
-    const dashLength = (item.total / totalExpenses) * circumference;
+    const dashLength = baseForSlices > 0 ? (item.total / baseForSlices) * circumference : 0;
     const offset = -accumulatedDash;
     accumulatedDash += dashLength;
+    const remainingDash = Math.max(circumference - dashLength, 0);
 
     return `
       <circle 
@@ -2498,7 +3012,7 @@ function renderDonutChartSVG(items, totalExpenses) {
         fill="none" 
         stroke="${item.color}" 
         stroke-width="${strokeWidth}" 
-        stroke-dasharray="${dashLength.toFixed(2)} ${(circumference - dashLength).toFixed(2)}" 
+        stroke-dasharray="${dashLength.toFixed(2)} ${remainingDash.toFixed(2)}" 
         stroke-dashoffset="${offset.toFixed(2)}"
         class="donut-slice" 
         data-index="${idx}"
@@ -2549,7 +3063,7 @@ function renderRankingListHTML(items, totalExpenses) {
             </div>
           </div>
           <div class="ranking-bar-bg">
-            <div class="ranking-bar-fill" style="width: ${item.percentage.toFixed(1)}%; background: ${item.color};"></div>
+            <div class="ranking-bar-fill" style="width: ${Math.min(Math.max(item.percentage, 0), 100).toFixed(1)}%; background: ${item.color};"></div>
           </div>
         </div>
       `).join('')}
@@ -2613,10 +3127,6 @@ function renderChartsModal() {
   if (DOM.chartMonthSelect) {
     DOM.chartMonthSelect.value = String(currentMonth);
     DOM.chartMonthSelect.classList.toggle('active', currentPeriodMode === 'month');
-  }
-  if (DOM.btnChartPeriodMonth) {
-    DOM.btnChartPeriodMonth.textContent = `Mês Atual (${MONTH_SHORT[currentMonth]})`;
-    DOM.btnChartPeriodMonth.classList.toggle('active', currentPeriodMode === 'month');
   }
   if (DOM.btnChartPeriodYear) {
     DOM.btnChartPeriodYear.textContent = `Ano Inteiro (${currentYear})`;
@@ -2809,9 +3319,21 @@ function onChartMonthChange(newMonthIndex) {
     });
   }
 
+  // Se houver edição em andamento, cancela para não salvar no mês incorreto
+  if (AppState.editingTransactionId) {
+    if (typeof window !== 'undefined' && typeof window.Financas?.cancelEditingTransaction === 'function') {
+      window.Financas.cancelEditingTransaction();
+    }
+  }
+
   // Atualiza os dados do Dashboard em segundo plano
   if (typeof window !== 'undefined' && window.Financas && typeof window.Financas.renderDashboard === 'function') {
     window.Financas.renderDashboard();
+  }
+
+  // Se o usuário estiver na tela de categoria, atualiza também a tabela de lançamentos
+  if (AppState.currentRoute === 'category' && typeof window !== 'undefined' && window.Financas && typeof window.Financas.renderTransactionsTable === 'function') {
+    window.Financas.renderTransactionsTable();
   }
 
   // Re-renderiza o gráfico com o novo mês selecionado
@@ -2836,6 +3358,16 @@ function setChartGroupMode(group) {
  */
 
 
+
+
+
+
+
+
+
+
+
+
 let isResettingData = false;
 
 function renderCategoryTable() {
@@ -2856,6 +3388,9 @@ function renderCategoryTable() {
 
   categories.forEach(cat => {
     const tr = document.createElement('tr');
+    if (AppState.editingCategoryId === cat.id) {
+      tr.classList.add('row-editing');
+    }
     const typeConfig = CATEGORY_TYPES.find(t => t.id === cat.type) || { badgeClass: 'badge-variavel' };
 
     tr.innerHTML = `
@@ -2864,22 +3399,157 @@ function renderCategoryTable() {
         <span class="badge ${typeConfig.badgeClass}">${escapeHTML(cat.type)}</span>
       </td>
       <td class="text-right">
-        <button class="btn-delete" data-delete-id="${escapeHTML(cat.id)}" aria-label="Excluir categoria ${escapeHTML(cat.name)}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="3 6 5 6 21 6"></polyline>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-          </svg>
-          <span>Excluir</span>
-        </button>
+        <div style="display: inline-flex; gap: 6px; justify-content: flex-end;">
+          <button class="btn-edit" data-edit-category-id="${escapeHTML(cat.id)}" aria-label="Editar categoria ${escapeHTML(cat.name)}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+            <span>Editar</span>
+          </button>
+          <button class="btn-delete" data-delete-id="${escapeHTML(cat.id)}" aria-label="Excluir categoria ${escapeHTML(cat.name)}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span>Excluir</span>
+          </button>
+        </div>
       </td>
     `;
 
-    tr.querySelector('.btn-delete').addEventListener('click', () => {
+    tr.querySelector?.('.btn-edit')?.addEventListener('click', () => {
+      startEditingCategory(cat.id);
+    });
+
+    tr.querySelector?.('.btn-delete')?.addEventListener('click', () => {
       deleteCategory(cat.id);
     });
 
     DOM.categoryTableBody.appendChild(tr);
   });
+}
+
+function startEditingCategory(id) {
+  const cat = AppState.categories.find(c => c.id === id);
+  if (!cat) return;
+
+  AppState.editingCategoryId = cat.id;
+
+  if (DOM.categoryNameInput) DOM.categoryNameInput.value = cat.name;
+  if (DOM.categoryTypeSelect) DOM.categoryTypeSelect.value = cat.type;
+
+  if (DOM.btnSubmitCategoryText) {
+    DOM.btnSubmitCategoryText.textContent = 'Salvar';
+  }
+  if (DOM.btnSubmitCategoryIcon) {
+    DOM.btnSubmitCategoryIcon.innerHTML = '<polyline points="20 6 9 17 4 12"></polyline>';
+  }
+  if (DOM.btnCancelEditCategory) {
+    DOM.btnCancelEditCategory.style.display = 'inline-flex';
+  }
+
+  if (DOM.categoryTableBody && typeof DOM.categoryTableBody.querySelectorAll === 'function') {
+    DOM.categoryTableBody.querySelectorAll('tr').forEach(row => {
+      row.classList?.remove('row-editing');
+    });
+    const targetRow = DOM.categoryTableBody.querySelector?.(`[data-edit-category-id="${cat.id}"]`)?.closest?.('tr');
+    if (targetRow) targetRow.classList?.add('row-editing');
+  }
+
+  DOM.categoryNameInput?.focus?.();
+  DOM.categoryForm?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+  showToast(`Editando categoria "${cat.name}"...`);
+}
+
+function cancelEditingCategory() {
+  AppState.editingCategoryId = null;
+
+  if (DOM.categoryNameInput) DOM.categoryNameInput.value = '';
+  if (DOM.categoryTypeSelect) DOM.categoryTypeSelect.selectedIndex = 0;
+
+  if (DOM.btnSubmitCategoryText) {
+    DOM.btnSubmitCategoryText.textContent = 'Adicionar';
+  }
+  if (DOM.btnSubmitCategoryIcon) {
+    DOM.btnSubmitCategoryIcon.innerHTML = '<line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>';
+  }
+  if (DOM.btnCancelEditCategory) {
+    DOM.btnCancelEditCategory.style.display = 'none';
+  }
+
+  if (DOM.nameError) DOM.nameError.textContent = '';
+  if (DOM.typeError) DOM.typeError.textContent = '';
+  if (DOM.categoryNameInput) DOM.categoryNameInput.style.borderColor = '';
+  if (DOM.categoryTypeSelect) DOM.categoryTypeSelect.style.borderColor = '';
+
+  if (DOM.categoryTableBody && typeof DOM.categoryTableBody.querySelectorAll === 'function') {
+    DOM.categoryTableBody.querySelectorAll('tr').forEach(row => {
+      row.classList?.remove('row-editing');
+    });
+  }
+}
+
+function updateCategory(id, newName, newType) {
+  const cat = AppState.categories.find(c => c.id === id);
+  if (!cat) return;
+
+  const oldName = cat.name;
+  const oldType = cat.type;
+  const normOldType = normalizeCategoryType(oldType);
+
+  const cleanNewName = newName.trim();
+  const cleanNewType = normalizeCategoryType(newType.trim());
+
+  cat.name = cleanNewName;
+  cat.type = cleanNewType;
+
+  // Atualiza em cascata os lançamentos vinculados a essa categoria
+  AppState.transactions.forEach(t => {
+    const matchesId = t.categoryId ? (t.categoryId === id) : false;
+    const matchesNameAndType = !t.categoryId &&
+      (t.categoryName || '').trim().toLowerCase() === oldName.trim().toLowerCase() &&
+      (t.categoryType ? normalizeCategoryType(t.categoryType) === normOldType : true);
+
+    if (matchesId || matchesNameAndType) {
+      t.categoryId = id;
+      t.categoryName = cleanNewName;
+      t.categoryType = cleanNewType;
+
+      if (cleanNewType === 'Receita' || cleanNewType === 'Repasse') {
+        t.isRevenue = true;
+      } else {
+        t.isRevenue = false;
+      }
+    }
+
+    // Se essa categoria for um Cartão de Crédito que tinha lançamentos de Repasse espelhados
+    // atualiza a anotação na descrição da receita do repasse: "Descrição ( Antigo )" -> "Descrição ( Novo )"
+    if (normOldType === 'Cartão de Crédito' && t.linkedId && t.description) {
+      const oldSuffix = `( ${oldName} )`;
+      const newSuffix = `( ${cleanNewName} )`;
+      if (t.description.endsWith(oldSuffix)) {
+        t.description = t.description.slice(0, t.description.length - oldSuffix.length) + newSuffix;
+      }
+    }
+  });
+
+  saveCategories(AppState.categories);
+  saveTransactions(AppState.transactions);
+  triggerCloudSync();
+
+  cancelEditingCategory();
+  renderCategoryTable();
+  rebuildSidebar();
+  renderDashboard();
+
+  if (AppState.currentRoute === 'category' && AppState.activeCategoryId === id) {
+    if (typeof window !== 'undefined' && typeof window.Financas?.setupCategoryDetailView === 'function') {
+      window.Financas.setupCategoryDetailView(cat);
+    }
+  }
+
+  showToast(`Categoria "${cleanNewName}" atualizada com sucesso!`);
 }
 
 function addCategory(name, type) {
@@ -2902,26 +3572,90 @@ function deleteCategory(id) {
   const cat = AppState.categories.find(c => c.id === id);
   if (!cat) return;
 
-  if (!confirm(`Deseja realmente excluir a categoria "${cat.name}" e seus lançamentos?`)) {
+  const targetCategoryType = normalizeCategoryType(cat.type);
+  const targetCategoryName = (cat.name || '').toLowerCase();
+
+  const directTransactionIdsToDelete = new Set();
+  const linkedIdsToDelete = new Set();
+
+  AppState.transactions.forEach(t => {
+    const matchesId = t.categoryId ? (t.categoryId === id) : false;
+    const matchesNameAndType = !t.categoryId && 
+      (t.categoryName || '').toLowerCase() === targetCategoryName &&
+      (t.categoryType ? normalizeCategoryType(t.categoryType) === targetCategoryType : true);
+
+    if (matchesId || matchesNameAndType) {
+      directTransactionIdsToDelete.add(t.id);
+      if (t.linkedId) {
+        linkedIdsToDelete.add(t.linkedId);
+      }
+    }
+  });
+
+  let otherLinkedCount = 0;
+  if (linkedIdsToDelete.size > 0) {
+    AppState.transactions.forEach(t => {
+      if (!directTransactionIdsToDelete.has(t.id) && t.linkedId && linkedIdsToDelete.has(t.linkedId)) {
+        otherLinkedCount++;
+      }
+    });
+  }
+
+  const isDeletingRepasse = targetCategoryType === 'Repasse';
+
+  let confirmMsg = `Deseja realmente excluir a categoria "${cat.name}" e seus lançamentos?`;
+  if (isDeletingRepasse && otherLinkedCount > 0) {
+    confirmMsg += `\n\nOBSERVAÇÃO: Existem ${otherLinkedCount} despesa(s) no Cartão de Crédito vinculada(s) que serão mantidas e desvinculadas automaticamente.`;
+  } else if (otherLinkedCount > 0) {
+    confirmMsg += `\n\nATENÇÃO: Existem ${otherLinkedCount} lançamento(s) vinculado(s) em outras categorias (ex: Cartão de Crédito ou Repasse) que também serão excluídos.`;
+  }
+
+  if (!confirm(confirmMsg)) {
     return;
   }
 
   AppState.categories = AppState.categories.filter(c => c.id !== id);
   saveCategories(AppState.categories);
 
-  AppState.transactions = AppState.transactions.filter(t => {
-    if (t.categoryId) {
-      return t.categoryId !== id;
+  if (isDeletingRepasse) {
+    AppState.transactions = AppState.transactions
+      .filter(t => !directTransactionIdsToDelete.has(t.id))
+      .map(t => {
+        if (t.linkedId && linkedIdsToDelete.has(t.linkedId)) {
+          return { ...t, linkedId: null };
+        }
+        return t;
+      });
+  } else {
+    AppState.transactions = AppState.transactions.filter(t => {
+      if (directTransactionIdsToDelete.has(t.id)) return false;
+      if (t.linkedId && linkedIdsToDelete.has(t.linkedId)) return false;
+      return true;
+    });
+  }
+
+  if (AppState.editingTransactionId && (directTransactionIdsToDelete.has(AppState.editingTransactionId) || !AppState.transactions.some(t => t.id === AppState.editingTransactionId))) {
+    if (typeof window !== 'undefined' && typeof window.Financas?.cancelEditingTransaction === 'function') {
+      window.Financas.cancelEditingTransaction();
     }
-    const sameName = t.categoryName.toLowerCase() === cat.name.toLowerCase();
-    const sameType = t.categoryType ? (normalizeCategoryType(t.categoryType) === normalizeCategoryType(cat.type)) : true;
-    return !(sameName && sameType);
-  });
+  }
+
+  if (AppState.editingCategoryId === id) {
+    cancelEditingCategory();
+  }
+
   saveTransactions(AppState.transactions);
   triggerCloudSync();
 
-  if (AppState.currentRoute === 'category' && AppState.activeCategoryId === id) {
-    navigateTo('configuracoes');
+  if (AppState.currentRoute === 'category') {
+    if (AppState.activeCategoryId === id) {
+      navigateTo('configuracoes');
+    } else if (typeof window !== 'undefined' && typeof window.Financas?.renderTransactionsTable === 'function') {
+      window.Financas.renderTransactionsTable();
+      if (typeof window.Financas?.updateMonthTotal === 'function') {
+        window.Financas.updateMonthTotal();
+      }
+    }
   }
 
   renderCategoryTable();
@@ -2960,7 +3694,8 @@ function handleCategorySubmit(e) {
   if (!hasError && nameVal && typeVal) {
     const normType = normalizeCategoryType(typeVal);
     const isDuplicate = AppState.categories.some(
-      c => c.name.toLowerCase() === nameVal.toLowerCase() &&
+      c => c.id !== AppState.editingCategoryId &&
+           c.name.toLowerCase() === nameVal.toLowerCase() &&
            normalizeCategoryType(c.type).toLowerCase() === normType.toLowerCase()
     );
     if (isDuplicate) {
@@ -2972,11 +3707,14 @@ function handleCategorySubmit(e) {
 
   if (hasError) return;
 
-  addCategory(nameVal, typeVal);
-
-  if (DOM.categoryNameInput) DOM.categoryNameInput.value = '';
-  if (DOM.categoryTypeSelect) DOM.categoryTypeSelect.selectedIndex = 0;
-  if (DOM.categoryNameInput) DOM.categoryNameInput.focus();
+  if (AppState.editingCategoryId) {
+    updateCategory(AppState.editingCategoryId, nameVal, typeVal);
+  } else {
+    addCategory(nameVal, typeVal);
+    if (DOM.categoryNameInput) DOM.categoryNameInput.value = '';
+    if (DOM.categoryTypeSelect) DOM.categoryTypeSelect.selectedIndex = 0;
+    if (DOM.categoryNameInput) DOM.categoryNameInput.focus();
+  }
 }
 
 function exportBackup() {
@@ -2998,8 +3736,15 @@ function exportBackup() {
   a.download = `financas_backup_${today}.json`;
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+
+  setTimeout(() => {
+    if (a.parentNode) {
+      document.body.removeChild(a);
+    }
+    if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(url);
+    }
+  }, 1000);
 
   showToast('Backup baixado com sucesso!');
 }
@@ -3031,14 +3776,14 @@ function importBackup(e) {
         }
       }
 
-      if (parsed.lastUpdated) {
-        saveCategories(AppState.categories, true);
-        saveTransactions(AppState.transactions, true);
-        touchLastUpdated(parsed.lastUpdated);
-      } else {
-        saveCategories(AppState.categories);
-        saveTransactions(AppState.transactions);
+      const nowTs = touchLastUpdated(Date.now());
+      saveCategories(AppState.categories, true);
+      saveTransactions(AppState.transactions, true);
+      if (Array.isArray(incomingTags) && incomingTags.length > 0) {
+        saveTags(AppState.tags, true);
       }
+      touchLastUpdated(nowTs);
+      triggerCloudSync();
 
       rebuildSidebar();
       renderCategoryTable();
@@ -3088,7 +3833,7 @@ function clearAllLocalData(options = {}) {
     if (DOM.jsonbinApiKey) DOM.jsonbinApiKey.value = '';
     if (DOM.jsonbinBinId) DOM.jsonbinBinId.value = '';
     if (typeof setCloudStatus === 'function') {
-      setCloudStatus('disconnected', '☁️ Nuvem Atualizada');
+      setCloudStatus('disconnected', '☁️ Nuvem Desconectada');
     }
 
     showToast('Dados e credenciais apagados com sucesso. O sistema será reiniciado.', 'success');
@@ -3111,11 +3856,28 @@ function clearAllLocalData(options = {}) {
  */
 
 
+
+
+
+
+
+
+
+
+
 function changeYear(delta) {
+  if (AppState.editingTransactionId) {
+    cancelEditingTransaction();
+  }
   AppState.selectedYear = Number(AppState.selectedYear) + delta;
   updateYearDisplay();
   renderTransactionsTable();
   renderDashboard();
+  if (DOM.modalChartsOverlay && DOM.modalChartsOverlay.classList.contains('active')) {
+    if (typeof window !== 'undefined' && typeof window.Financas?.renderChartsModal === 'function') {
+      window.Financas.renderChartsModal();
+    }
+  }
   showToast(`Ano selecionado: ${AppState.selectedYear}`);
 }
 
@@ -3206,6 +3968,12 @@ function updateTransRepasseVisibility(category) {
   }
 }
 
+const isParcelada = (installment) => {
+  if (!installment) return false;
+  const clean = String(installment).trim();
+  return /^\d+\s*\/\s*\d+$/.test(clean);
+};
+
 function updateMonthTotal() {
   const activeCategory = AppState.categories.find(c => c.id === AppState.activeCategoryId);
   if (!activeCategory || !DOM.transTotalValue) return;
@@ -3213,10 +3981,20 @@ function updateMonthTotal() {
   const currentMonth = Number(AppState.selectedMonthIndex);
   const currentYear = Number(AppState.selectedYear);
 
-  const filtered = AppState.transactions.filter(t => {
-    const matchCat = t.categoryId ? (t.categoryId === activeCategory.id) : (t.categoryName.trim().toLowerCase() === activeCategory.name.trim().toLowerCase());
+  let filtered = AppState.transactions.filter(t => {
+    const matchCat = t.categoryId 
+      ? (t.categoryId === activeCategory.id) 
+      : (t.categoryName.trim().toLowerCase() === activeCategory.name.trim().toLowerCase() &&
+         (t.categoryType ? normalizeCategoryType(t.categoryType) === normalizeCategoryType(activeCategory.type) : true));
     return matchCat && Number(t.monthIndex) === currentMonth && Number(t.year) === currentYear;
   });
+
+  const filtroTipo = DOM.filtroTipoCompra ? DOM.filtroTipoCompra.value : 'todos';
+  if (filtroTipo === 'unicas') {
+    filtered = filtered.filter(t => !isParcelada(t.installment));
+  } else if (filtroTipo === 'parceladas') {
+    filtered = filtered.filter(t => isParcelada(t.installment));
+  }
 
   const totalSum = filtered.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
   DOM.transTotalValue.textContent = formatCurrency(totalSum);
@@ -3322,7 +4100,10 @@ function renderTransactionsTable() {
   const isFixedOrVariable = (categoryTypeNorm === 'Conta Fixa' || categoryTypeNorm === 'Variável Prevista' || categoryTypeNorm === 'Receita' || categoryTypeNorm === 'Repasse');
 
   const monthTransactions = AppState.transactions.filter(t => {
-    const matchCat = t.categoryId ? (t.categoryId === activeCategory.id) : (t.categoryName.trim().toLowerCase() === activeCategory.name.trim().toLowerCase());
+    const matchCat = t.categoryId 
+      ? (t.categoryId === activeCategory.id) 
+      : ((t.categoryName || '').trim().toLowerCase() === (activeCategory.name || '').trim().toLowerCase() &&
+         (t.categoryType ? normalizeCategoryType(t.categoryType) === normalizeCategoryType(activeCategory.type) : true));
     return matchCat && Number(t.monthIndex) === currentMonth && Number(t.year) === currentYear;
   });
 
@@ -3330,15 +4111,9 @@ function renderTransactionsTable() {
 
   let filteredTransactions = monthTransactions;
   if (filtroTipo === 'unicas') {
-    filteredTransactions = monthTransactions.filter(t => {
-      const inst = t.installment !== undefined && t.installment !== null ? String(t.installment).trim() : '';
-      return !inst || inst === '-';
-    });
+    filteredTransactions = monthTransactions.filter(t => !isParcelada(t.installment));
   } else if (filtroTipo === 'parceladas') {
-    filteredTransactions = monthTransactions.filter(t => {
-      const inst = t.installment !== undefined && t.installment !== null ? String(t.installment) : '';
-      return inst.includes('/');
-    });
+    filteredTransactions = monthTransactions.filter(t => isParcelada(t.installment));
   }
 
   DOM.transactionTableBody.innerHTML = '';
@@ -3455,6 +4230,11 @@ function renderTransactionsTable() {
         const commitValueChange = () => {
           const newVal = parseFloat(inlineInput.value);
           if (!isNaN(newVal) && newVal !== t.value) {
+            if (newVal === 0) {
+              showToast('O valor deve ser diferente de zero.', 'error');
+              inlineInput.value = Number(t.value).toFixed(2);
+              return;
+            }
             let propagateInline = false;
             if (t.groupId) {
               propagateInline = window.confirm(
@@ -3509,24 +4289,25 @@ function deleteTransaction(id) {
   const hasGroupOccurrences = transaction.groupId && AppState.transactions.some(
     other => other.id !== transaction.id && other.groupId === transaction.groupId
   );
-  const isFraction = transaction.installment && transaction.installment.includes('/');
+  const isFraction = Boolean(
+    (transaction.installment && transaction.installment.includes('/')) ||
+    isParcelada(transaction.installment)
+  );
 
-  if (hasGroupOccurrences || isFraction) {
-    const deleteSubsequent = window.confirm(
-      "Deseja excluir também as parcelas/ocorrências dos meses seguintes?"
-    );
-
-    const result = deleteTransactionCascade(AppState.transactions, id, deleteSubsequent);
-    AppState.transactions = result.transactions;
-    showToast(deleteSubsequent ? "Lançamento e ocorrências seguintes excluídos com sucesso." : "Apenas o lançamento deste mês foi excluído.");
-  } else {
-    if (!window.confirm(`Deseja excluir o lançamento "${transaction.description}"?`)) {
-      return;
-    }
-    const result = deleteTransactionCascade(AppState.transactions, id, false);
-    AppState.transactions = result.transactions;
-    showToast("Lançamento excluído com sucesso.");
+  if (!window.confirm(`Deseja realmente excluir o lançamento "${transaction.description}"?`)) {
+    return;
   }
+
+  let deleteSubsequent = false;
+  if (hasGroupOccurrences || isFraction) {
+    deleteSubsequent = window.confirm(
+      "Deseja excluir também as parcelas/ocorrências dos meses seguintes?\n\n[OK] = Excluir este mês e os seguintes\n[Cancelar] = Excluir apenas a ocorrência deste mês"
+    );
+  }
+
+  const result = deleteTransactionCascade(AppState.transactions, id, deleteSubsequent);
+  AppState.transactions = result.transactions;
+  showToast(deleteSubsequent ? "Lançamento e ocorrências seguintes excluídos com sucesso." : "Apenas o lançamento deste mês foi excluído.");
 
   if (AppState.editingTransactionId === id) {
     cancelEditingTransaction();
@@ -3579,35 +4360,50 @@ function handleTransactionSubmit(e) {
 
     if (existingIndex !== -1) {
       const existing = AppState.transactions[existingIndex];
+      const isFraction = Boolean(
+        isParcelada(existing.installment) ||
+        (existing.installment && existing.installment.includes('/')) ||
+        isParcelada(installmentRaw) ||
+        (installmentRaw && installmentRaw.includes('/'))
+      );
       const hasGroupId = Boolean(existing.groupId);
       let propagateToFuture = false;
 
-      if (hasGroupId) {
+      if (hasGroupId || isFraction) {
         propagateToFuture = window.confirm(
-          "Deseja aplicar essa alteração (Valor/Descrição/Classificação) também para os meses seguintes?"
+          "Deseja aplicar essa alteração (Valor/Descrição/Classificação/Parcelas) também para os meses seguintes?"
         );
       }
 
-      const result = updateTransactionCascade(
-        AppState.transactions,
-        AppState.editingTransactionId,
-        { description: descVal, value: valNum, installment: installmentRaw || '-', tag: tagToSave },
-        propagateToFuture
-      );
+      try {
+        const result = updateTransactionCascade(
+          AppState.transactions,
+          AppState.editingTransactionId,
+          { description: descVal, value: valNum, installment: installmentRaw || '-', tag: tagToSave },
+          propagateToFuture
+        );
 
-      AppState.transactions = result.transactions;
-      saveTransactions(AppState.transactions);
-      triggerCloudSync();
-      cancelEditingTransaction();
-      renderTransactionsTable();
-      renderDashboard();
+        AppState.transactions = result.transactions;
+        saveTransactions(AppState.transactions);
+        triggerCloudSync();
+        cancelEditingTransaction();
+        renderTransactionsTable();
+        renderDashboard();
 
-      if (propagateToFuture) {
-        showToast(`Alteração aplicada neste mês e nos ${result.updatedCount - 1} meses seguintes!`);
-      } else {
-        showToast('Alteração aplicada apenas neste mês.');
+        if (propagateToFuture) {
+          showToast(`Alteração aplicada neste mês e nos ${result.updatedCount - 1} meses seguintes!`);
+        } else {
+          showToast('Alteração aplicada apenas neste mês.');
+        }
+        return;
+      } catch (err) {
+        if (DOM.transInstallmentError) DOM.transInstallmentError.textContent = err.message || 'Erro no parcelamento.';
+        if (DOM.transInstallmentInput) {
+          DOM.transInstallmentInput.style.borderColor = 'var(--danger)';
+          DOM.transInstallmentInput.focus();
+        }
+        return;
       }
-      return;
     } else {
       cancelEditingTransaction();
     }
@@ -3673,9 +4469,11 @@ function handleTransactionSubmit(e) {
   }
 }
 
-function renderTagSelectOptions(selectedTag = '') {
+function renderTagSelectOptions(selectedTag) {
   if (!DOM.itemTag) return;
-  const current = selectedTag !== undefined ? String(selectedTag).trim() : (DOM.itemTag.value || '');
+  const current = (selectedTag !== undefined && selectedTag !== null) 
+    ? String(selectedTag).trim() 
+    : (DOM.itemTag.value || '').trim();
   const tags = (Array.isArray(AppState.tags)) ? AppState.tags : [];
 
   let html = '<option value="">Selecione uma classificação...</option>';
@@ -3762,8 +4560,12 @@ function deleteTagFromModal(tagName) {
   AppState.tags = AppState.tags.filter(t => t.toLowerCase() !== tagName.toLowerCase());
   saveTags(AppState.tags);
 
+  if (DOM.itemTag && DOM.itemTag.value.toLowerCase() === tagName.toLowerCase()) {
+    DOM.itemTag.value = '';
+  }
+
   renderManageTagsList();
-  renderTagSelectOptions();
+  renderTagSelectOptions(DOM.itemTag ? DOM.itemTag.value : '');
   showToast(`Classificação "${tagName}" removida da lista.`, 'info');
 }
 
@@ -3836,12 +4638,6 @@ function setupEventListeners() {
   if (DOM.overlayFiltros) DOM.overlayFiltros.addEventListener('click', closeFiltersDrawer);
   if (DOM.btnLimparFiltros) DOM.btnLimparFiltros.addEventListener('click', clearTypeFilters);
 
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && DOM.drawerFiltros && DOM.drawerFiltros.classList.contains('open')) {
-      closeFiltersDrawer();
-    }
-  });
-
   if (DOM.fixedNavLinks) {
     DOM.fixedNavLinks.forEach(link => {
       link.addEventListener('click', () => {
@@ -3885,6 +4681,10 @@ function setupEventListeners() {
       if (DOM.typeError) DOM.typeError.textContent = '';
       DOM.categoryTypeSelect.style.borderColor = '';
     });
+  }
+
+  if (DOM.btnCancelEditCategory) {
+    DOM.btnCancelEditCategory.addEventListener('click', cancelEditingCategory);
   }
 
   if (DOM.transDescriptionInput) {
@@ -3933,7 +4733,6 @@ function setupEventListeners() {
 
   if (DOM.btnOpenChartsModal) DOM.btnOpenChartsModal.addEventListener('click', openChartsModal);
   if (DOM.btnCloseChartsModal) DOM.btnCloseChartsModal.addEventListener('click', closeChartsModal);
-  if (DOM.btnDoneChartsModal) DOM.btnDoneChartsModal.addEventListener('click', closeChartsModal);
   if (DOM.modalChartsOverlay) {
     DOM.modalChartsOverlay.addEventListener('click', (e) => {
       if (e.target === DOM.modalChartsOverlay) closeChartsModal();
@@ -3943,8 +4742,12 @@ function setupEventListeners() {
     DOM.chartMonthSelect.addEventListener('change', (e) => {
       onChartMonthChange(e.target.value);
     });
+    DOM.chartMonthSelect.addEventListener('click', () => {
+      if (DOM.chartMonthSelect.classList.contains('active') === false) {
+        onChartMonthChange(DOM.chartMonthSelect.value);
+      }
+    });
   }
-  if (DOM.btnChartPeriodMonth) DOM.btnChartPeriodMonth.addEventListener('click', () => setChartPeriodMode('month'));
   if (DOM.btnChartPeriodYear) DOM.btnChartPeriodYear.addEventListener('click', () => setChartPeriodMode('year'));
   if (DOM.btnChartGroupCategory) DOM.btnChartGroupCategory.addEventListener('click', () => setChartGroupMode('category'));
   if (DOM.btnChartGroupType) DOM.btnChartGroupType.addEventListener('click', () => setChartGroupMode('type'));
@@ -3963,6 +4766,7 @@ function setupEventListeners() {
         return;
       }
       cancelEditingTransaction();
+      cancelEditingCategory();
       resetAllForms();
       closeMobileSidebar();
       closeFiltersDrawer();
@@ -4047,6 +4851,7 @@ window.Financas = {
   applyTypeFilters,
   clearTypeFilters,
   exportBackup,
+  importBackup,
   clearAllLocalData,
   loadLastUpdated,
   touchLastUpdated,
@@ -4074,11 +4879,18 @@ window.Financas = {
   toggleTransactionPaid,
   deleteTransaction,
   handleTransactionSubmit,
+  updateMonthTotal,
+  isParcelada,
   renderCategoryTable,
   addCategory,
   deleteCategory,
+  startEditingCategory,
+  cancelEditingCategory,
+  updateCategory,
   handleCategorySubmit,
   renderDashboard,
+  renderDashboardMetrics,
+  getFilteredCategoriesForDashboard,
   renderDashboardTables,
   renderSpreadsheetBlock,
   calculateExpensesChartData,

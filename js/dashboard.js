@@ -14,6 +14,100 @@ import { saveTransactions } from './storage.js';
 import { triggerCloudSync } from './cloud.js';
 import { navigateTo } from './router.js';
 
+/**
+ * Retorna as categorias ativas no Dashboard de acordo com os filtros selecionados no Drawer.
+ * Se nenhum filtro estiver ativo, retorna todas as categorias.
+ * @returns {Array<Object>}
+ */
+export function getFilteredCategoriesForDashboard() {
+  const selectedTypes = AppState.selectedTypeFilters;
+  if (!selectedTypes || selectedTypes.size === 0) {
+    return AppState.categories;
+  }
+  return AppState.categories.filter(c => {
+    const norm = normalizeCategoryType(c.type);
+    const isCustom = !CATEGORY_TYPES.some(t => normalizeCategoryType(c.type) === t.id);
+    return selectedTypes.has(norm) || (isCustom && selectedTypes.has('Outras Despesas'));
+  });
+}
+
+/**
+ * Renderiza os 4 cartões de métricas do topo do Dashboard considerando os filtros ativos.
+ * @param {number} currentMonth
+ * @param {number} currentYear
+ * @returns {Object} Resumo com os totais calculados
+ */
+export function renderDashboardMetrics(currentMonth, currentYear) {
+  const monthName = MONTH_NAMES[currentMonth];
+  const isFiltered = Boolean(AppState.selectedTypeFilters && AppState.selectedTypeFilters.size > 0);
+  const filteredCategories = getFilteredCategoriesForDashboard();
+
+  let summary;
+  if (isFiltered && filteredCategories.length === 0) {
+    summary = {
+      totalReceitas: 0,
+      totalDespesas: 0,
+      saldoPrevisto: 0,
+      totalLancamentos: 0,
+      categoryTotals: new Map()
+    };
+  } else {
+    summary = calculateTotalsByMonthAndYear(AppState.transactions, filteredCategories, currentMonth, currentYear);
+  }
+
+  if (DOM.dashboardMetrics) {
+    DOM.dashboardMetrics.innerHTML = `
+      <div class="metric-card">
+        <div class="metric-card-header">
+          <span class="metric-card-title">Total de Receitas</span>
+          <span class="badge badge-receita">${monthName}/${currentYear}</span>
+        </div>
+        <div class="metric-card-val" style="color: var(--success);">${formatCurrency(summary.totalReceitas)}</div>
+        <div class="metric-card-sub">${isFiltered ? 'Entradas nos tipos filtrados' : 'Entradas no período'}</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card-header">
+          <span class="metric-card-title">Total de Despesas</span>
+          <span class="badge badge-fixa">${monthName}/${currentYear}</span>
+        </div>
+        <div class="metric-card-val" style="color: var(--danger);">${formatCurrency(summary.totalDespesas)}</div>
+        <div class="metric-card-sub">${isFiltered ? 'Despesas nos tipos filtrados' : 'Contas, cartões e variáveis'}</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card-header">
+          <span class="metric-card-title">Saldo Previsto</span>
+          <span class="badge ${summary.saldoPrevisto >= 0 ? 'badge-receita' : 'badge-fixa'}">${monthName}/${currentYear}</span>
+        </div>
+        <div class="metric-card-val" style="color: ${summary.saldoPrevisto >= 0 ? 'var(--success)' : 'var(--danger)'};">
+          ${formatCurrency(summary.saldoPrevisto)}
+        </div>
+        <div class="metric-card-sub">${isFiltered ? 'Saldo dos tipos filtrados' : 'Receitas - Despesas'}</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card-header">
+          <span class="metric-card-title">Lançamentos</span>
+          <span class="badge badge-variavel">${monthName}/${currentYear}</span>
+        </div>
+        <div class="metric-card-val">${summary.totalLancamentos}</div>
+        <div class="metric-card-sub">${isFiltered ? 'Itens nos tipos filtrados' : 'Itens no mês e ano selecionados'}</div>
+      </div>
+    `;
+  }
+
+  if (DOM.dashCategoryCount) {
+    if (isFiltered) {
+      DOM.dashCategoryCount.textContent = `${filteredCategories.length} de ${AppState.categories.length} categorias (${AppState.selectedTypeFilters.size} tipos filtrados)`;
+    } else {
+      DOM.dashCategoryCount.textContent = `${AppState.categories.length} ${AppState.categories.length === 1 ? 'categoria cadastrada' : 'categorias cadastradas'}`;
+    }
+  }
+
+  return summary;
+}
+
 export function renderDashboard() {
   const currentMonth = Number(AppState.selectedMonthIndex);
   const currentYear = Number(AppState.selectedYear);
@@ -36,53 +130,7 @@ export function renderDashboard() {
   }
 
   // 1. Métricas do Topo
-  const summary = calculateTotalsByMonthAndYear(AppState.transactions, AppState.categories, currentMonth, currentYear);
-
-  if (DOM.dashboardMetrics) {
-    DOM.dashboardMetrics.innerHTML = `
-      <div class="metric-card">
-        <div class="metric-card-header">
-          <span class="metric-card-title">Total de Receitas</span>
-          <span class="badge badge-receita">${monthName}/${currentYear}</span>
-        </div>
-        <div class="metric-card-val" style="color: var(--success);">${formatCurrency(summary.totalReceitas)}</div>
-        <div class="metric-card-sub">Entradas no período</div>
-      </div>
-
-      <div class="metric-card">
-        <div class="metric-card-header">
-          <span class="metric-card-title">Total de Despesas</span>
-          <span class="badge badge-fixa">${monthName}/${currentYear}</span>
-        </div>
-        <div class="metric-card-val" style="color: var(--danger);">${formatCurrency(summary.totalDespesas)}</div>
-        <div class="metric-card-sub">Contas, cartões e variáveis</div>
-      </div>
-
-      <div class="metric-card">
-        <div class="metric-card-header">
-          <span class="metric-card-title">Saldo Previsto</span>
-          <span class="badge ${summary.saldoPrevisto >= 0 ? 'badge-receita' : 'badge-fixa'}">${monthName}/${currentYear}</span>
-        </div>
-        <div class="metric-card-val" style="color: ${summary.saldoPrevisto >= 0 ? 'var(--success)' : 'var(--danger)'};">
-          ${formatCurrency(summary.saldoPrevisto)}
-        </div>
-        <div class="metric-card-sub">Receitas - Despesas</div>
-      </div>
-
-      <div class="metric-card">
-        <div class="metric-card-header">
-          <span class="metric-card-title">Lançamentos</span>
-          <span class="badge badge-variavel">${monthName}/${currentYear}</span>
-        </div>
-        <div class="metric-card-val">${summary.totalLancamentos}</div>
-        <div class="metric-card-sub">Itens no mês e ano selecionados</div>
-      </div>
-    `;
-  }
-
-  if (DOM.dashCategoryCount) {
-    DOM.dashCategoryCount.textContent = `${AppState.categories.length} ${AppState.categories.length === 1 ? 'categoria cadastrada' : 'categorias cadastradas'}`;
-  }
+  renderDashboardMetrics(currentMonth, currentYear);
 
   // 2. Renderiza as Tabelas no formato Planilha
   renderDashboardTables(currentMonth, currentYear);
@@ -173,7 +221,10 @@ export function renderSpreadsheetBlock(typeId, groupTitle, categories, isRevenue
 
   categories.forEach(cat => {
     const catTransactions = AppState.transactions.filter(t => {
-      const matchCat = t.categoryId ? (t.categoryId === cat.id) : (t.categoryName.trim().toLowerCase() === cat.name.trim().toLowerCase());
+      const matchCat = t.categoryId 
+        ? (t.categoryId === cat.id) 
+        : (t.categoryName.trim().toLowerCase() === cat.name.trim().toLowerCase() &&
+           (t.categoryType ? normalizeCategoryType(t.categoryType) === normalizeCategoryType(cat.type) : true));
       return matchCat && Number(t.monthIndex) === currentMonth && Number(t.year) === currentYear;
     });
 
@@ -349,6 +400,10 @@ export function applyTypeFilters() {
       }
     }
   });
+
+  const currentMonth = Number(AppState.selectedMonthIndex);
+  const currentYear = Number(AppState.selectedYear);
+  renderDashboardMetrics(currentMonth, currentYear);
 }
 
 /**

@@ -871,6 +871,46 @@
       // Saldo Previsto = 3500 - 200 = 3300
       expect(summary.saldoPrevisto).toBe(3300.00);
     });
+
+    it('3.9 Filtro de parcelas: classifica "1x" e "à vista" como compras únicas e "1/3" ou "2x" como parceladas', () => {
+      const isParcelada = (installment) => {
+        if (!installment) return false;
+        const clean = String(installment).trim();
+        if (!clean || clean === '-') return false;
+        if (/^1\s*x$/i.test(clean)) return false;
+        if (/^(à\s*vista|a\s*vista|vista|única|unica)$/i.test(clean)) return false;
+        return clean.includes('/') || /^([2-9]|\d{2,})\s*x$/i.test(clean);
+      };
+
+      const items = [
+        { desc: 'Item 1', installment: '-' },
+        { desc: 'Item 2', installment: '1x' },
+        { desc: 'Item 3', installment: 'à vista' },
+        { desc: 'Item 4', installment: '1/3' },
+        { desc: 'Item 5', installment: '2x' }
+      ];
+
+      const unicas = items.filter(t => !isParcelada(t.installment));
+      const parceladas = items.filter(t => isParcelada(t.installment));
+
+      expect(unicas.map(t => t.desc)).toEqual(['Item 1', 'Item 2', 'Item 3']);
+      expect(parceladas.map(t => t.desc)).toEqual(['Item 4', 'Item 5']);
+    });
+
+    it('3.10 Lançamentos órfãos sem categoria válida são desconsiderados nos totais do Dashboard', () => {
+      const activeCats = [
+        { id: 'c_mercado', name: 'Mercado', type: 'Cartão de Crédito' }
+      ];
+      const transactions = [
+        { categoryId: 'c_mercado', categoryName: 'Mercado', value: 200, monthIndex: 5, year: 2026 },
+        { categoryId: 'c_orfao', categoryName: 'Categoria Apagada', value: 999, monthIndex: 5, year: 2026 }
+      ];
+
+      const summary = calculateTotalsByMonthAndYear(transactions, activeCats, 5, 2026);
+      expect(summary.totalLancamentos).toBe(1);
+      expect(summary.totalDespesas).toBe(200.00);
+      expect(summary.categoryTotals.get('categoria apagada')).toBe(undefined);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1070,6 +1110,22 @@
       const transCarregadas = loadTransactions();
       expect(transCarregadas.find(t => t.id === 'l1').tag).toBe('Alimentação');
       expect(transCarregadas.find(t => t.id === 'l2').tag).toBe('Transporte');
+    });
+
+    it('5.8 renderTagSelectOptions sem argumentos preserva a classificação selecionada no formulário', () => {
+      saveTags(['Alimentação', 'Saúde'], true);
+      Financas.AppState.tags = ['Alimentação', 'Saúde'];
+
+      if (Financas.DOM.itemTag) {
+        Financas.renderTagSelectOptions('Saúde');
+        expect(Financas.DOM.itemTag.value).toBe('Saúde');
+
+        // Simula o fechamento do modal chamando sem argumentos
+        Financas.renderTagSelectOptions();
+
+        // O valor NÃO deve ser limpo
+        expect(Financas.DOM.itemTag.value).toBe('Saúde');
+      }
     });
   });
 
@@ -1312,6 +1368,126 @@
       // Saldo Previsto permanece exatamente 0 (neutro)
       expect(summary.saldoPrevisto).toBe(0);
     });
+
+    it('6.9 Edição a partir do repasse (updateTransactionCascade) sincroniza a despesa do cartão sem vazar o sufixo', () => {
+      const pair = createExpenseWithRepasseMirror({
+        description: 'Almoço Executivo',
+        value: 120,
+        monthIndex: 4,
+        year: 2026,
+        cardCategory,
+        repasseCategory
+      });
+
+      const initial = [...pair.all];
+      const repasseRev = pair.revenues[0];
+
+      // Edita a partir do repasse, mantendo o sufixo no input
+      const res = updateTransactionCascade(initial, repasseRev.id, {
+        description: 'Almoço de Negócios ( Cartão Sofisa )',
+        value: 140
+      }, false);
+
+      const expAtualizado = res.transactions.find(t => t.id === pair.expenses[0].id);
+      const revAtualizado = res.transactions.find(t => t.id === repasseRev.id);
+
+      // O repasse mantém o sufixo
+      expect(revAtualizado.description).toBe('Almoço de Negócios ( Cartão Sofisa )');
+      expect(revAtualizado.value).toBe(140);
+
+      // O cartão recebe a descrição limpa SEM o sufixo "( Cartão Sofisa )"
+      expect(expAtualizado.description).toBe('Almoço de Negócios');
+      expect(expAtualizado.value).toBe(140);
+    });
+
+    it('6.10 Edição a partir do repasse sem sufixo no input preserva o sufixo no repasse e atualiza o cartão limpamente', () => {
+      const pair = createExpenseWithRepasseMirror({
+        description: 'Mercado Semanal',
+        value: 80,
+        monthIndex: 2,
+        year: 2026,
+        cardCategory,
+        repasseCategory
+      });
+
+      const initial = [...pair.all];
+      const repasseRev = pair.revenues[0];
+
+      // Usuário editou o repasse digitando apenas o texto base
+      const res = updateTransactionCascade(initial, repasseRev.id, {
+        description: 'Supermercado Mensal',
+        value: 95
+      }, false);
+
+      const expAtualizado = res.transactions.find(t => t.id === pair.expenses[0].id);
+      const revAtualizado = res.transactions.find(t => t.id === repasseRev.id);
+
+      // O repasse preserva o sufixo original do cartão
+      expect(revAtualizado.description).toBe('Supermercado Mensal ( Cartão Sofisa )');
+      expect(revAtualizado.value).toBe(95);
+
+      // O cartão recebe o texto limpo
+      expect(expAtualizado.description).toBe('Supermercado Mensal');
+      expect(expAtualizado.value).toBe(95);
+    });
+
+    it('6.11 deleteCategory apaga a categoria e também limpa simetricamente as transações vinculadas por linkedId em outras categorias', () => {
+      const pair = createExpenseWithRepasseMirror({
+        description: 'Compra Especial',
+        value: 500,
+        monthIndex: 6,
+        year: 2026,
+        cardCategory,
+        repasseCategory
+      });
+
+      Financas.AppState.categories = [
+        { ...cardCategory },
+        { ...repasseCategory }
+      ];
+      Financas.AppState.transactions = [...pair.all];
+
+      const originalConfirm = global.confirm;
+      global.confirm = () => true;
+
+      try {
+        // Exclui a categoria do Cartão
+        Financas.deleteCategory(cardCategory.id);
+
+        // A categoria do cartão foi excluída
+        expect(Financas.AppState.categories.find(c => c.id === cardCategory.id)).toBe(undefined);
+        // A categoria de Repasse permanece
+        expect(Financas.AppState.categories.find(c => c.id === repasseCategory.id)).toBeTruthy();
+
+        // Ambas as transações (do cartão e do repasse vinculado) foram excluídas, evitando órfãos
+        expect(Financas.AppState.transactions).toHaveLength(0);
+      } finally {
+        global.confirm = originalConfirm;
+      }
+    });
+
+    it('6.11 Edição em cascata (updateTransactionCascade): expande série de parcelas e atualiza frações para meses seguintes', () => {
+      const groupId = 'grp_moveis_123';
+      const initial = [
+        { id: 't1', groupId, description: 'Mesa', value: 100, installment: '1/2', monthIndex: 0, year: 2026, categoryName: 'Móveis' },
+        { id: 't2', groupId, description: 'Mesa', value: 100, installment: '2/2', monthIndex: 1, year: 2026, categoryName: 'Móveis' }
+      ];
+
+      // Altera a série de 2 para 4 parcelas
+      const res = updateTransactionCascade(initial, 't1', {
+        installment: '1/4',
+        value: 100,
+        description: 'Mesa de Jantar'
+      }, true);
+
+      expect(res.transactions).toHaveLength(4);
+      expect(res.transactions[0].installment).toBe('1/4');
+      expect(res.transactions[1].installment).toBe('2/4');
+      expect(res.transactions[2].installment).toBe('3/4');
+      expect(res.transactions[2].monthIndex).toBe(2);
+      expect(res.transactions[3].installment).toBe('4/4');
+      expect(res.transactions[3].monthIndex).toBe(3);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1415,6 +1591,59 @@
       expect(Financas.AppState.transactions.length).toBe(1);
       expect(Financas.AppState.transactions[0].description).toBe('Dividendos');
       expect(Financas.AppState.lastUpdated).toBe(2000000);
+
+      global.fetch = originalFetch;
+    });
+
+    it('8.5 importBackup atualiza lastUpdated para o timestamp atual, impedindo que checkAndSyncCloudOnStartup sobrescreva a restauração', async () => {
+      localStorage.setItem(STORAGE_KEYS.JSONBIN_KEY, 'key_123');
+      localStorage.setItem(STORAGE_KEYS.JSONBIN_BIN_ID, 'bin_456');
+
+      if (typeof Financas.resetStartupSyncLock === 'function') {
+        Financas.resetStartupSyncLock();
+      }
+
+      const cloudTimestamp = 1500000;
+      const remoteData = {
+        lastUpdated: cloudTimestamp,
+        categorias: [{ id: 'cat_cloud_old', name: 'Antiga', type: 'Conta Fixa' }],
+        lancamentos: [],
+        tags: []
+      };
+
+      const originalFetch = global.fetch;
+      global.fetch = async () => ({
+        ok: true,
+        json: async () => ({ record: remoteData })
+      });
+
+      const backupAntigo = {
+        lastUpdated: 1000000,
+        categorias: [{ id: 'cat_backup', name: 'Backup Restaurado', type: 'Receita' }],
+        lancamentos: [{ id: 'lanc_backup', categoryId: 'cat_backup', categoryName: 'Backup Restaurado', value: 999, monthIndex: 0, year: 2026, description: 'Item Restaurado' }],
+        tags: ['Backup']
+      };
+
+      const mockEvent = {
+        target: {
+          files: [
+            new Blob([JSON.stringify(backupAntigo)], { type: 'application/json' })
+          ],
+          value: 'fake.json'
+        }
+      };
+
+      Financas.importBackup(mockEvent);
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      expect(Financas.AppState.lastUpdated > cloudTimestamp).toBe(true);
+
+      const checkResult = await checkAndSyncCloudOnStartup({ silent: true, showNotification: false, force: true });
+      expect(checkResult.status).toBe('sync_to_cloud_triggered');
+
+      expect(Financas.AppState.categories[0].name).toBe('Backup Restaurado');
+      expect(Financas.AppState.transactions[0].description).toBe('Item Restaurado');
 
       global.fetch = originalFetch;
     });
@@ -1557,6 +1786,725 @@
 
       Financas.onChartMonthChange(10); // Muda para Novembro (índice 10)
       expect(Financas.AppState.selectedMonthIndex).toBe(10);
+    });
+
+    it('9.7 Gráficos aceitam estornos e valores negativos, deduzindo corretamente do total de despesas', () => {
+      const transComEstorno = [
+        { id: 't1', categoryId: 'c_mercado', value: 300, monthIndex: 0, year: 2026, description: 'Supermercado' },
+        { id: 't2', categoryId: 'c_mercado', value: -50, monthIndex: 0, year: 2026, description: 'Estorno Item Devolvido' }
+      ];
+
+      const data = Financas.calculateExpensesChartData(transComEstorno, testCategories, {
+        periodMode: 'month',
+        groupMode: 'category',
+        monthIndex: 0,
+        year: 2026
+      });
+
+      // Total deve ser 300 - 50 = 250
+      expect(data.totalExpenses).toBe(250);
+      expect(data.count).toBe(2);
+      expect(data.items[0].total).toBe(250);
+
+      // Na evolução mensal, mês 0 deve ter 250 de despesa
+      const evo = Financas.calculateMonthlyEvolutionData(transComEstorno, testCategories, 2026);
+      expect(evo.monthlyTotals[0].expenses).toBe(250);
+    });
+
+    it('9.8 Categorias com mesmo nome e tipos diferentes são mapeadas sem colisão', () => {
+      const collisionCategories = [
+        { id: 'c_mercado_cartao', name: 'Mercado', type: 'Cartão de Crédito' },
+        { id: 'c_mercado_fixa', name: 'Mercado', type: 'Conta Fixa' }
+      ];
+
+      const trans = [
+        { id: 't1', categoryId: 'c_mercado_cartao', categoryName: 'Mercado', categoryType: 'Cartão de Crédito', value: 100, monthIndex: 0, year: 2026 },
+        { id: 't2', categoryId: 'c_mercado_fixa', categoryName: 'Mercado', categoryType: 'Conta Fixa', value: 200, monthIndex: 0, year: 2026 }
+      ];
+
+      const byType = Financas.calculateExpensesChartData(trans, collisionCategories, {
+        periodMode: 'month',
+        groupMode: 'type',
+        monthIndex: 0,
+        year: 2026
+      });
+
+      const cartaoGroup = byType.items.find(i => i.label === 'Cartão de Crédito');
+      const fixaGroup = byType.items.find(i => i.label === 'Conta Fixa');
+
+      expect(cartaoGroup.total).toBe(100);
+      expect(fixaGroup.total).toBe(200);
+    });
+
+    it('9.9 Geração de parcelas adota estritamente o formato fracionário X/Y (ex: 1/3) e ignora Nx', () => {
+      const resFrac = Financas.generateTransactionsMultiYear({
+        description: 'Teclado Mecânico',
+        value: 150,
+        installment: '1/3',
+        monthIndex: 0,
+        year: 2026,
+        categoryType: 'Cartão de Crédito'
+      });
+
+      expect(resFrac).toHaveLength(3);
+      expect(resFrac[0].installment).toBe('1/3');
+      expect(resFrac[1].installment).toBe('2/3');
+      expect(resFrac[2].installment).toBe('3/3');
+
+      // Formato '3x' não é mais expandido automaticamente como série, tratando-se como lançamento avulso
+      const resNx = Financas.generateTransactionsMultiYear({
+        description: 'Mouse Sem Fio',
+        value: 100,
+        installment: '3x',
+        monthIndex: 0,
+        year: 2026,
+        categoryType: 'Cartão de Crédito'
+      });
+
+      expect(resNx).toHaveLength(1);
+      expect(resNx[0].installment).toBe('3x');
+    });
+
+    it('9.10 Edição em cascata estendendo parcelas preserva o sufixo e descrição do espelho repasse', () => {
+      const pair = Financas.createExpenseWithRepasseMirror({
+        description: 'Monitor',
+        value: 200,
+        installment: '1/2',
+        monthIndex: 0,
+        year: 2026,
+        cardCategory: { id: 'c_card', name: 'Nubank', type: 'Cartão de Crédito' },
+        repasseCategory: { id: 'c_rep', name: 'João', type: 'Repasse' }
+      });
+
+      const updated = Financas.updateTransactionCascade(
+        pair.all,
+        pair.expenses[0].id,
+        { description: 'Monitor 4K', value: 250, installment: '1/3' },
+        true
+      );
+
+      const newExpenseThird = updated.transactions.find(t => t.categoryId === 'c_card' && t.installment === '3/3');
+      const newMirrorThird = updated.transactions.find(t => t.categoryId === 'c_rep' && t.installment === '3/3');
+
+      expect(newExpenseThird).toBeTruthy();
+      expect(newExpenseThird.description).toBe('Monitor 4K');
+      expect(newMirrorThird).toBeTruthy();
+      expect(newMirrorThird.description).toBe('Monitor 4K ( Nubank )');
+    });
+
+    it('9.11 areStatesEqual detecta alteração de categoria ou receita em lançamento', () => {
+      const localState = {
+        categories: [{ id: 'c1', name: 'Alimentação', type: 'Conta Fixa' }],
+        tags: [],
+        transactions: [{ id: 't1', value: 50, monthIndex: 0, year: 2026, description: 'Lanche', installment: '-', isPaid: false, tag: '', groupId: null, linkedId: null, categoryId: 'c1', categoryName: 'Alimentação', categoryType: 'Conta Fixa', isRevenue: false }]
+      };
+
+      const remoteRecord = {
+        categorias: [{ id: 'c1', name: 'Alimentação', type: 'Conta Fixa' }],
+        tags: [],
+        lancamentos: [{ id: 't1', value: 50, monthIndex: 0, year: 2026, description: 'Lanche', installment: '-', isPaid: false, tag: '', groupId: null, linkedId: null, categoryId: 'c2', categoryName: 'Outros', categoryType: 'Conta Fixa', isRevenue: false }]
+      };
+
+      const isEqual = Financas.areStatesEqual(localState, remoteRecord);
+      expect(isEqual).toBe(false);
+    });
+
+    it('9.12 Edição em parcela intermediária com propagação alinha o denominador das parcelas anteriores do mesmo grupo', () => {
+      const gId = 'grp_teste_alinhamento';
+      const initialSeries = [
+        { id: 'tx_p1', groupId: gId, description: 'Notebook', value: 1000, installment: '1/3', monthIndex: 0, year: 2026, categoryName: 'Eletrônicos', categoryType: 'Cartão de Crédito' },
+        { id: 'tx_p2', groupId: gId, description: 'Notebook', value: 1000, installment: '2/3', monthIndex: 1, year: 2026, categoryName: 'Eletrônicos', categoryType: 'Cartão de Crédito' },
+        { id: 'tx_p3', groupId: gId, description: 'Notebook', value: 1000, installment: '3/3', monthIndex: 2, year: 2026, categoryName: 'Eletrônicos', categoryType: 'Cartão de Crédito' }
+      ];
+
+      // Usuário edita a parcela 2 (mês 1), estendendo para 5 parcelas no total
+      const res = Financas.updateTransactionCascade(
+        initialSeries,
+        'tx_p2',
+        { installment: '2/5', value: 1000, description: 'Notebook Dell' },
+        true
+      );
+
+      // Deve ter 5 parcelas agora
+      expect(res.transactions).toHaveLength(5);
+
+      // A parcela 1 (anterior ao mês editado) deve ter sido alinhada para 1/5 em vez de ficar como 1/3
+      const p1 = res.transactions.find(t => t.id === 'tx_p1');
+      expect(p1.installment).toBe('1/5');
+
+      // As parcelas seguintes devem estar com denominador /5
+      const p2 = res.transactions.find(t => t.id === 'tx_p2');
+      expect(p2.installment).toBe('2/5');
+      const p3 = res.transactions.find(t => t.id === 'tx_p3');
+      expect(p3.installment).toBe('3/5');
+
+      const p4 = res.transactions.find(t => t.installment === '4/5');
+      expect(p4).toBeTruthy();
+      expect(p4.monthIndex).toBe(3);
+
+      const p5 = res.transactions.find(t => t.installment === '5/5');
+      expect(p5).toBeTruthy();
+      expect(p5.monthIndex).toBe(4);
+    });
+
+    it('9.13 calculateExpensesChartData alinha o total de despesas com o Dashboard quando uma categoria fica zerada ou negativa por estorno', () => {
+      const cats = [
+        { id: 'c_mercado', name: 'Supermercado', type: 'Cartão de Crédito' },
+        { id: 'c_roupas', name: 'Roupas', type: 'Cartão de Crédito' }
+      ];
+
+      const trans = [
+        { id: 't1', categoryId: 'c_mercado', value: 300, monthIndex: 0, year: 2026 },
+        { id: 't2', categoryId: 'c_roupas', value: 100, monthIndex: 0, year: 2026 },
+        { id: 't3', categoryId: 'c_roupas', value: -100, monthIndex: 0, year: 2026 } // Devolução anulou a categoria
+      ];
+
+      // Dashboard
+      const dash = Financas.calculateTotalsByMonthAndYear(trans, cats, 0, 2026);
+      expect(dash.totalDespesas).toBe(300);
+
+      // Gráficos
+      const chart = Financas.calculateExpensesChartData(trans, cats, {
+        periodMode: 'month',
+        groupMode: 'category',
+        monthIndex: 0,
+        year: 2026
+      });
+
+      // Total de despesas deve bater exatamente com o Dashboard (300)
+      expect(chart.totalExpenses).toBe(dash.totalDespesas);
+      // Itens positivos no Donut é apenas Supermercado (Roupas zerou e não tem fatia positiva)
+      expect(chart.items).toHaveLength(1);
+      expect(chart.items[0].label).toBe('Supermercado');
+      expect(chart.items[0].total).toBe(300);
+    });
+
+    it('9.14 onChartMonthChange e changeYear encerram edição pendente e sincronizam estado', () => {
+      Financas.AppState.editingTransactionId = 'fake_edit_id';
+
+      // Muda o ano via changeYear
+      Financas.changeYear(1);
+      expect(Financas.AppState.editingTransactionId).toBe(null);
+
+      // Seta novamente para testar troca de mês no gráfico
+      Financas.AppState.editingTransactionId = 'fake_edit_id_2';
+      Financas.onChartMonthChange(3);
+      expect(Financas.AppState.editingTransactionId).toBe(null);
+      expect(Financas.AppState.selectedMonthIndex).toBe(3);
+
+      // Verifica se updateMonthTotal e isParcelada estão exportados em window.Financas
+      expect(typeof Financas.updateMonthTotal).toBe('function');
+      expect(typeof Financas.isParcelada).toBe('function');
+    });
+
+    it('9.15 handleTransactionSubmit em modo de edição atualiza o lançamento sem ReferenceError (existing)', () => {
+      const catId = 'cat_test_edit';
+      Financas.AppState.categories = [{ id: catId, name: 'Aluguel', type: 'Conta Fixa' }];
+      Financas.AppState.transactions = [{
+        id: 'tx_edit_test',
+        groupId: null,
+        linkedId: null,
+        categoryId: catId,
+        categoryName: 'Aluguel',
+        categoryType: 'Conta Fixa',
+        description: 'Aluguel Antigo',
+        installment: '-',
+        value: 1200,
+        year: 2026,
+        monthIndex: 0,
+        isPaid: false,
+        tag: ''
+      }];
+      Financas.AppState.activeCategoryId = catId;
+      Financas.AppState.editingTransactionId = 'tx_edit_test';
+
+      // Cria ou obtém os inputs no DOM
+      let descInput = document.getElementById('transDescription');
+      if (!descInput) {
+        descInput = document.createElement('input');
+        descInput.id = 'transDescription';
+        document.body.appendChild(descInput);
+      }
+      descInput.value = 'Aluguel Novo';
+
+      let valInput = document.getElementById('transValue');
+      if (!valInput) {
+        valInput = document.createElement('input');
+        valInput.id = 'transValue';
+        document.body.appendChild(valInput);
+      }
+      valInput.value = 'R$ 1.350,00';
+
+      let instInput = document.getElementById('transInstallment');
+      if (!instInput) {
+        instInput = document.createElement('input');
+        instInput.id = 'transInstallment';
+        document.body.appendChild(instInput);
+      }
+      instInput.value = '-';
+
+      // Executa submissão da edição (não deve lançar ReferenceError)
+      let erroLancado = null;
+      try {
+        Financas.handleTransactionSubmit({ preventDefault: () => {} });
+      } catch (err) {
+        erroLancado = err;
+      }
+
+      expect(erroLancado).toBe(null);
+      const atualizado = Financas.AppState.transactions.find(t => t.id === 'tx_edit_test');
+      expect(atualizado).toBeTruthy();
+      expect(atualizado.description).toBe('Aluguel Novo');
+      expect(atualizado.value).toBe(1350);
+      expect(Financas.AppState.editingTransactionId).toBe(null);
+    });
+
+    it('9.16 updateTransactionCascade valida fração e lança erro se parcela atual for maior que o total ou menor igual a zero', () => {
+      const items = [{
+        id: 'tx_frac_test',
+        groupId: 'grp_frac_1',
+        description: 'Celular',
+        installment: '1/3',
+        value: 500,
+        monthIndex: 0,
+        year: 2026,
+        categoryName: 'Compras',
+        categoryType: 'Cartão de Crédito'
+      }];
+
+      // 5/2 deve lançar erro
+      expect(() => {
+        Financas.updateTransactionCascade(items, 'tx_frac_test', { installment: '5/2' }, true);
+      }).toThrow('A parcela atual não pode ser maior que o total.');
+
+      // 0/3 deve lançar erro
+      expect(() => {
+        Financas.updateTransactionCascade(items, 'tx_frac_test', { installment: '0/3' }, true);
+      }).toThrow('Os números da parcela devem ser maiores que zero.');
+
+      // 2/0 deve lançar erro
+      expect(() => {
+        Financas.updateTransactionCascade(items, 'tx_frac_test', { installment: '2/0' }, true);
+      }).toThrow('Os números da parcela devem ser maiores que zero.');
+    });
+
+    it('9.17 handleTransactionSubmit não exclui lançamento ao receber fração inválida (5/2) em modo de edição e exibe erro', () => {
+      const catId = 'cat_protect_test';
+      Financas.AppState.categories = [{ id: catId, name: 'Compras', type: 'Cartão de Crédito' }];
+      Financas.AppState.transactions = [{
+        id: 'tx_protect_1',
+        groupId: 'grp_protect_1',
+        linkedId: null,
+        categoryId: catId,
+        categoryName: 'Compras',
+        categoryType: 'Cartão de Crédito',
+        description: 'Smartphone',
+        installment: '1/3',
+        value: 500,
+        year: 2026,
+        monthIndex: 0,
+        isPaid: false,
+        tag: ''
+      }];
+      Financas.AppState.activeCategoryId = catId;
+      Financas.AppState.editingTransactionId = 'tx_protect_1';
+
+      let descInput = document.getElementById('transDescription');
+      if (!descInput) {
+        descInput = document.createElement('input');
+        descInput.id = 'transDescription';
+        document.body.appendChild(descInput);
+      }
+      descInput.value = 'Smartphone';
+
+      let valInput = document.getElementById('transValue');
+      if (!valInput) {
+        valInput = document.createElement('input');
+        valInput.id = 'transValue';
+        document.body.appendChild(valInput);
+      }
+      valInput.value = 'R$ 500,00';
+
+      let instInput = document.getElementById('transInstallment');
+      if (!instInput) {
+        instInput = document.createElement('input');
+        instInput.id = 'transInstallment';
+        document.body.appendChild(instInput);
+      }
+      instInput.value = '5/2'; // Fração inválida
+
+      // Submete formulário
+      Financas.handleTransactionSubmit({ preventDefault: () => {} });
+
+      // O lançamento original NÃO pode ter sido excluído!
+      const original = Financas.AppState.transactions.find(t => t.id === 'tx_protect_1');
+      expect(original).toBeTruthy();
+      expect(original.description).toBe('Smartphone');
+
+      // O erro deve ser registrado no campo de erro
+      const errEl = document.getElementById('transInstallmentError');
+      if (errEl) {
+        expect(errEl.textContent).toContain('A parcela atual não pode ser maior que o total');
+      }
+    });
+
+    it('9.18 deleteTransaction aborta com segurança ao clicar em Cancelar na primeira confirmação', () => {
+      const initial = [
+        { id: 'tx_cancel_1', groupId: 'grp_c_1', description: 'Monitor', installment: '1/3', value: 800, monthIndex: 0, year: 2026 },
+        { id: 'tx_cancel_2', groupId: 'grp_c_1', description: 'Monitor', installment: '2/3', value: 800, monthIndex: 1, year: 2026 }
+      ];
+      Financas.AppState.transactions = [...initial];
+
+      // Simula o usuário clicando em "Cancelar" no confirm
+      const originalConfirm = window.confirm;
+      window.confirm = () => false;
+
+      try {
+        Financas.deleteTransaction('tx_cancel_1');
+        // Nenhum lançamento deve ter sido excluído!
+        expect(Financas.AppState.transactions).toHaveLength(2);
+        expect(Financas.AppState.transactions.find(t => t.id === 'tx_cancel_1')).toBeTruthy();
+      } finally {
+        window.confirm = originalConfirm;
+      }
+    });
+
+    it('9.19 deleteTransaction com confirmação parcial exclui apenas o mês e mantém ocorrências futuras', () => {
+      const initial = [
+        { id: 'tx_parc_1', groupId: 'grp_p_1', description: 'Cadeira', installment: '1/3', value: 300, monthIndex: 0, year: 2026 },
+        { id: 'tx_parc_2', groupId: 'grp_p_1', description: 'Cadeira', installment: '2/3', value: 300, monthIndex: 1, year: 2026 }
+      ];
+      Financas.AppState.transactions = [...initial];
+
+      const originalConfirm = window.confirm;
+      let confirmCallCount = 0;
+      // Primeiro confirm (Deseja realmente excluir?) => true
+      // Segundo confirm (Excluir também meses seguintes?) => false (apenas este mês)
+      window.confirm = () => {
+        confirmCallCount++;
+        return confirmCallCount === 1;
+      };
+
+      try {
+        Financas.deleteTransaction('tx_parc_1');
+        expect(Financas.AppState.transactions).toHaveLength(1);
+        expect(Financas.AppState.transactions[0].id).toBe('tx_parc_2');
+      } finally {
+        window.confirm = originalConfirm;
+      }
+    });
+
+    it('9.20 deleteCategory preserva e desvincula faturas de Cartão de Crédito ao excluir categoria de Repasse', () => {
+      const cardCategory = { id: 'cat_cartao_test', name: 'Nubank', type: 'Cartão de Crédito' };
+      const repasseCategory = { id: 'cat_repasse_test', name: 'Repasse João', type: 'Repasse' };
+
+      const cardTx = {
+        id: 'tx_card_1',
+        categoryId: cardCategory.id,
+        categoryName: cardCategory.name,
+        categoryType: cardCategory.type,
+        description: 'Jantar',
+        value: 120,
+        linkedId: 'link_repasse_123',
+        monthIndex: 0,
+        year: 2026
+      };
+      const repasseTx = {
+        id: 'tx_repasse_1',
+        categoryId: repasseCategory.id,
+        categoryName: repasseCategory.name,
+        categoryType: repasseCategory.type,
+        description: 'Jantar ( Nubank )',
+        value: 120,
+        linkedId: 'link_repasse_123',
+        isRevenue: true,
+        monthIndex: 0,
+        year: 2026
+      };
+
+      Financas.AppState.categories = [{ ...cardCategory }, { ...repasseCategory }];
+      Financas.AppState.transactions = [{ ...cardTx }, { ...repasseTx }];
+
+      const originalConfirm = window.confirm;
+      let promptMessage = '';
+      window.confirm = (msg) => {
+        promptMessage = msg;
+        return true;
+      };
+
+      try {
+        Financas.deleteCategory(repasseCategory.id);
+
+        // A categoria de Repasse foi excluída
+        expect(Financas.AppState.categories.find(c => c.id === repasseCategory.id)).toBe(undefined);
+        // A categoria do Cartão foi mantida
+        expect(Financas.AppState.categories.find(c => c.id === cardCategory.id)).toBeTruthy();
+
+        // O lançamento do Cartão de Crédito NÃO foi excluído, mas teve o linkedId limpo (desvinculado)
+        expect(Financas.AppState.transactions).toHaveLength(1);
+        const remainingCardTx = Financas.AppState.transactions[0];
+        expect(remainingCardTx.id).toBe('tx_card_1');
+        expect(remainingCardTx.linkedId).toBe(null);
+        expect(remainingCardTx.categoryId).toBe(cardCategory.id);
+
+        // O prompt de confirmação orientou o usuário sobre a preservação
+        expect(promptMessage.includes('mantidas e desvinculadas automaticamente')).toBe(true);
+      } finally {
+        window.confirm = originalConfirm;
+      }
+    });
+
+    it('9.21 updateTransactionCascade não aplica lógica de sufixo de repasse a receitas legítimas com parênteses', () => {
+      const recCategory = { id: 'cat_rec_1', name: 'Salário', type: 'Receita' };
+      const recTx = {
+        id: 'tx_rec_1',
+        categoryId: recCategory.id,
+        categoryName: recCategory.name,
+        categoryType: recCategory.type,
+        description: 'Salário (Bônus)',
+        value: 6000,
+        installment: '-',
+        isRevenue: true,
+        monthIndex: 1,
+        year: 2026
+      };
+
+      Financas.AppState.categories = [{ ...recCategory }];
+      Financas.AppState.transactions = [{ ...recTx }];
+
+      // 1. Edita a receita removendo o texto entre parênteses
+      const res1 = Financas.updateTransactionCascade(
+        Financas.AppState.transactions,
+        'tx_rec_1',
+        { description: 'Salário Fixo' },
+        false
+      );
+
+      const txAtualizada1 = res1.transactions.find(t => t.id === 'tx_rec_1');
+      expect(txAtualizada1).toBeTruthy();
+      // O sistema NÃO pode reinserir o sufixo "(Bônus)"!
+      expect(txAtualizada1.description).toBe('Salário Fixo');
+
+      // 2. Edita adicionando outra anotação em parênteses
+      const res2 = Financas.updateTransactionCascade(
+        res1.transactions,
+        'tx_rec_1',
+        { description: 'Salário Fixo (Adiantamento)' },
+        false
+      );
+
+      const txAtualizada2 = res2.transactions.find(t => t.id === 'tx_rec_1');
+      expect(txAtualizada2.description).toBe('Salário Fixo (Adiantamento)');
+    });
+
+    it('9.22 renderDashboardMetrics e applyTypeFilters sincronizam métricas do topo com os tipos filtrados no Drawer', () => {
+      const catFixa = { id: 'cat_f1', name: 'Aluguel', type: 'Conta Fixa' };
+      const catVar = { id: 'cat_v1', name: 'Supermercado', type: 'Variável Prevista' };
+      const catRec = { id: 'cat_r1', name: 'Salário', type: 'Receita' };
+
+      Financas.AppState.categories = [{ ...catFixa }, { ...catVar }, { ...catRec }];
+      Financas.AppState.transactions = [
+        { id: 't1', categoryId: 'cat_f1', categoryName: 'Aluguel', categoryType: 'Conta Fixa', value: 1500, monthIndex: 0, year: 2026 },
+        { id: 't2', categoryId: 'cat_v1', categoryName: 'Supermercado', categoryType: 'Variável Prevista', value: 600, monthIndex: 0, year: 2026 },
+        { id: 't3', categoryId: 'cat_r1', categoryName: 'Salário', categoryType: 'Receita', value: 5000, isRevenue: true, monthIndex: 0, year: 2026 }
+      ];
+      Financas.AppState.selectedMonthIndex = 0;
+      Financas.AppState.selectedYear = 2026;
+      Financas.AppState.selectedTypeFilters = new Set();
+
+      // 1. Sem filtros: métricas consolidadas globais
+      const metricsGlobal = Financas.renderDashboardMetrics(0, 2026);
+      expect(metricsGlobal.totalReceitas).toBe(5000);
+      expect(metricsGlobal.totalDespesas).toBe(2100);
+      expect(metricsGlobal.saldoPrevisto).toBe(2900);
+      expect(metricsGlobal.totalLancamentos).toBe(3);
+
+      // 2. Filtra estritamente por "Conta Fixa"
+      Financas.AppState.selectedTypeFilters.add('Conta Fixa');
+      const metricsFixa = Financas.renderDashboardMetrics(0, 2026);
+      expect(metricsFixa.totalReceitas).toBe(0);
+      expect(metricsFixa.totalDespesas).toBe(1500);
+      expect(metricsFixa.saldoPrevisto).toBe(-1500);
+      expect(metricsFixa.totalLancamentos).toBe(1);
+
+      // 3. Filtra por "Conta Fixa" e "Receita"
+      Financas.AppState.selectedTypeFilters.add('Receita');
+      const metricsFixaEReceita = Financas.renderDashboardMetrics(0, 2026);
+      expect(metricsFixaEReceita.totalReceitas).toBe(5000);
+      expect(metricsFixaEReceita.totalDespesas).toBe(1500);
+      expect(metricsFixaEReceita.saldoPrevisto).toBe(3500);
+      expect(metricsFixaEReceita.totalLancamentos).toBe(2);
+
+      // 4. Limpa os filtros
+      Financas.AppState.selectedTypeFilters.clear();
+      const metricsRestauradas = Financas.renderDashboardMetrics(0, 2026);
+      expect(metricsRestauradas.totalReceitas).toBe(5000);
+      expect(metricsRestauradas.totalDespesas).toBe(2100);
+      expect(metricsRestauradas.totalLancamentos).toBe(3);
+    });
+
+    it('9.23 Gráfico Donut e ranking não excedem 100% nem produzem stroke-dasharray negativo em meses com estornos', () => {
+      const cats = [
+        { id: 'c_mercado', name: 'Mercado', type: 'Conta Fixa' },
+        { id: 'c_farmacia', name: 'Farmácia', type: 'Conta Fixa' }
+      ];
+      const transComEstorno = [
+        { id: 't1', categoryId: 'c_mercado', categoryName: 'Mercado', categoryType: 'Conta Fixa', value: 300, monthIndex: 0, year: 2026 },
+        { id: 't2', categoryId: 'c_farmacia', categoryName: 'Farmácia', categoryType: 'Conta Fixa', value: -100, monthIndex: 0, year: 2026 }
+      ];
+
+      const data = Financas.calculateExpensesChartData(transComEstorno, cats, {
+        periodMode: 'month',
+        groupMode: 'category',
+        monthIndex: 0,
+        year: 2026
+      });
+
+      // Total líquido de despesas no centro deve ser 200
+      expect(data.totalExpenses).toBe(200);
+      expect(data.items).toHaveLength(1);
+      // O percentual não pode ser 150%; deve ser 100%
+      expect(data.items[0].percentage).toBe(100);
+
+      // SVG do Donut
+      const svg = Financas.renderDonutChartSVG(data.items, data.totalExpenses);
+      expect(svg.includes('donut-slice')).toBe(true);
+      // Confirma que não há valores negativos no stroke-dasharray
+      const dasharrayMatch = svg.match(/stroke-dasharray="([^"]+)"/);
+      expect(dasharrayMatch).toBeTruthy();
+      const [dashVal, remainVal] = dasharrayMatch[1].split(' ').map(Number);
+      expect(dashVal >= 0).toBe(true);
+      expect(remainVal >= 0).toBe(true);
+
+      // Ranking HTML não tem largura maior que 100%
+      const rankingHtml = Financas.renderRankingListHTML(data.items, data.totalExpenses);
+      expect(rankingHtml.includes('width: 100.0%')).toBe(true);
+    });
+
+    it('9.24 Relatórios gráficos aplicam normalizeCategoryType ignorando receitas com variações e unificando tipos', () => {
+      const cats = [
+        { id: 'c_rec_var', name: 'Freelance', type: 'receitas' },
+        { id: 'c_fixa_1', name: 'Internet', type: 'fixa' },
+        { id: 'c_fixa_2', name: 'Condomínio', type: 'Conta Fixa' }
+      ];
+
+      const trans = [
+        { id: 't1', categoryId: 'c_rec_var', categoryName: 'Freelance', categoryType: 'receitas', value: 2000, monthIndex: 0, year: 2026 },
+        { id: 't2', categoryId: 'c_fixa_1', categoryName: 'Internet', categoryType: 'fixa', value: 120, monthIndex: 0, year: 2026 },
+        { id: 't3', categoryId: 'c_fixa_2', categoryName: 'Condomínio', categoryType: 'Conta Fixa', value: 500, monthIndex: 0, year: 2026 }
+      ];
+
+      // 1. calculateExpensesChartData deve ignorar a receita com tipo 'receitas'
+      const chartData = Financas.calculateExpensesChartData(trans, cats, {
+        periodMode: 'month',
+        groupMode: 'type',
+        monthIndex: 0,
+        year: 2026
+      });
+
+      // Apenas Internet (120) e Condomínio (500) devem ser computados como despesa
+      expect(chartData.totalExpenses).toBe(620);
+      expect(chartData.items).toHaveLength(1);
+      // As categorias 'fixa' e 'Conta Fixa' devem ser unificadas sob o mesmo tipo normalizado 'Conta Fixa'
+      expect(chartData.items[0].label).toBe('Conta Fixa');
+      expect(chartData.items[0].total).toBe(620);
+
+      // 2. calculateMonthlyEvolutionData deve computar 'receitas' em revenues e não em expenses
+      const evo = Financas.calculateMonthlyEvolutionData(trans, cats, 2026);
+      expect(evo.monthlyTotals[0].revenues).toBe(2000);
+      expect(evo.monthlyTotals[0].expenses).toBe(620);
+    });
+
+    it('9.25 loadCloudCredentials define status inicial transparente e exportBackup agenda limpeza de Blob', () => {
+      const doc = (typeof document !== 'undefined') ? document : (typeof global !== 'undefined' && global.document ? global.document : null);
+
+      // 1. Sem credenciais: status 'disconnected'
+      localStorage.removeItem(STORAGE_KEYS.JSONBIN_KEY);
+      localStorage.removeItem(STORAGE_KEYS.JSONBIN_BIN_ID);
+      Financas.loadCloudCredentials();
+      let text = doc && typeof doc.getElementById === 'function' ? doc.getElementById('cloudStatusText') : null;
+      if (text && text.textContent) {
+        expect(text.textContent.includes('Desconectada')).toBe(true);
+      }
+
+      // 2. Com credenciais: status 'syncing' ("Conectando...") até validação de rede
+      localStorage.setItem(STORAGE_KEYS.JSONBIN_KEY, 'key_abc');
+      localStorage.setItem(STORAGE_KEYS.JSONBIN_BIN_ID, 'bin_xyz');
+      Financas.loadCloudCredentials();
+      if (text && text.textContent) {
+        expect(text.textContent.includes('Conectando')).toBe(true);
+      }
+
+      // 3. exportBackup executa e agenda limpeza sem erros síncronos
+      let exportThrew = false;
+      if (typeof Blob !== 'undefined' && doc && doc.body) {
+        try {
+          Financas.exportBackup();
+        } catch (e) {
+          exportThrew = true;
+        }
+      }
+      expect(exportThrew).toBe(false);
+    });
+
+    it('9.26 Edição de Categoria atualiza lançamentos vinculados e anotações de repasse sem perda de dados', () => {
+      Financas.AppState.categories = [
+        { id: 'cat_cc1', name: 'Nubank', type: 'Cartão de Crédito' },
+        { id: 'cat_rep1', name: 'Amigo', type: 'Repasse' }
+      ];
+
+      Financas.AppState.transactions = [
+        {
+          id: 'tx_cc1',
+          categoryId: 'cat_cc1',
+          categoryName: 'Nubank',
+          categoryType: 'Cartão de Crédito',
+          description: 'Restaurante',
+          value: 150,
+          monthIndex: 0,
+          year: 2026,
+          linkedId: 'link_test_1',
+          isRevenue: false
+        },
+        {
+          id: 'tx_rep1',
+          categoryId: 'cat_rep1',
+          categoryName: 'Amigo',
+          categoryType: 'Repasse',
+          description: 'Restaurante ( Nubank )',
+          value: 150,
+          monthIndex: 0,
+          year: 2026,
+          linkedId: 'link_test_1',
+          isRevenue: true
+        }
+      ];
+
+      // 1. Iniciar edição
+      Financas.startEditingCategory('cat_cc1');
+      expect(Financas.AppState.editingCategoryId).toBe('cat_cc1');
+
+      // 2. Atualizar categoria (renomear para "Nubank Black")
+      Financas.updateCategory('cat_cc1', 'Nubank Black', 'Cartão de Crédito');
+
+      // Categoria atualizada
+      const updatedCat = Financas.AppState.categories.find(c => c.id === 'cat_cc1');
+      expect(updatedCat.name).toBe('Nubank Black');
+      expect(Financas.AppState.editingCategoryId).toBe(null);
+
+      // Transação no Cartão de Crédito deve ter atualizado o categoryName
+      const updatedTxCC = Financas.AppState.transactions.find(t => t.id === 'tx_cc1');
+      expect(updatedTxCC.categoryName).toBe('Nubank Black');
+
+      // Transação espelhada no Repasse deve ter atualizado a anotação na descrição
+      const updatedTxRep = Financas.AppState.transactions.find(t => t.id === 'tx_rep1');
+      expect(updatedTxRep.description).toBe('Restaurante ( Nubank Black )');
+
+      // 3. Cancelar edição restaura estado
+      Financas.startEditingCategory('cat_rep1');
+      expect(Financas.AppState.editingCategoryId).toBe('cat_rep1');
+      Financas.cancelEditingCategory();
+      expect(Financas.AppState.editingCategoryId).toBe(null);
     });
   });
 

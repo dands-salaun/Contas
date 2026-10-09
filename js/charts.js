@@ -10,6 +10,7 @@ import { DOM } from './dom.js';
 import { AppState } from './state.js';
 import { CATEGORY_TYPES, MONTH_NAMES, MONTH_SHORT } from './constants.js';
 import { formatCurrency, escapeHTML } from './utils.js';
+import { normalizeCategoryType } from './normalization.js';
 
 export const CHART_PALETTE = [
   '#3b82f6', // Azul (Primary)
@@ -32,6 +33,40 @@ let currentGroupMode = 'category'; // 'category' | 'type' | 'tag'
 /**
  * Calcula dados agregados de despesas para renderização gráfica
  */
+export function createCategoryResolver(categories = []) {
+  const catIdMap = new Map();
+  const catCompositeMap = new Map();
+  const catNameMap = new Map();
+
+  (categories || []).forEach(c => {
+    if (c.id) catIdMap.set(String(c.id), c);
+    if (c.name) {
+      const nameKey = String(c.name).trim().toLowerCase();
+      const typeKey = normalizeCategoryType(c.type).toLowerCase();
+      catCompositeMap.set(`${nameKey}__${typeKey}`, c);
+      if (!catNameMap.has(nameKey)) {
+        catNameMap.set(nameKey, c);
+      }
+    }
+  });
+
+  return (t) => {
+    if (t.categoryId && catIdMap.has(String(t.categoryId))) {
+      return catIdMap.get(String(t.categoryId));
+    }
+    if (t.categoryName) {
+      const nameKey = String(t.categoryName).trim().toLowerCase();
+      if (t.categoryType) {
+        const typeKey = normalizeCategoryType(t.categoryType).toLowerCase();
+        const comp = catCompositeMap.get(`${nameKey}__${typeKey}`);
+        if (comp) return comp;
+      }
+      return catNameMap.get(nameKey) || null;
+    }
+    return null;
+  };
+}
+
 export function calculateExpensesChartData(transactions, categories, {
   periodMode = 'month',
   groupMode = 'category',
@@ -40,13 +75,7 @@ export function calculateExpensesChartData(transactions, categories, {
 } = {}) {
   const targetYear = Number(year);
   const targetMonth = Number(monthIndex);
-
-  // Mapeamento de categorias para identificar tipo e receitas
-  const catMap = new Map();
-  (categories || []).forEach(c => {
-    if (c.id) catMap.set(String(c.id), c);
-    if (c.name) catMap.set(String(c.name).trim().toLowerCase(), c);
-  });
+  const resolveCategory = createCategoryResolver(categories);
 
   // Filtra transações do ano e (opcionalmente) do mês selecionado
   const filtered = (transactions || []).filter(t => {
@@ -54,16 +83,17 @@ export function calculateExpensesChartData(transactions, categories, {
     if (periodMode === 'month' && Number(t.monthIndex) !== targetMonth) return false;
 
     const val = Number(t.value) || 0;
-    if (val <= 0) return false;
+    if (val === 0) return false;
 
-    const cat = catMap.get(String(t.categoryId || '')) ||
-      (t.categoryName ? catMap.get(String(t.categoryName).trim().toLowerCase()) : null);
+    const cat = resolveCategory(t);
+    const rawType = cat ? cat.type : t.categoryType;
+    const normType = rawType ? normalizeCategoryType(rawType) : null;
+    const typeConfig = normType ? CATEGORY_TYPES.find(ct => ct.id === normType) : null;
+    const isRev = typeConfig 
+      ? Boolean(typeConfig.isRevenue) 
+      : Boolean(t.isRevenue === true || normType === 'Receita' || normType === 'Repasse');
 
-    if (cat) {
-      const typeConfig = CATEGORY_TYPES.find(ct => ct.id === cat.type);
-      // Ignora receitas e repasses (isRevenue: true)
-      if (typeConfig && typeConfig.isRevenue) return false;
-    }
+    if (isRev) return false;
     return true;
   });
 
@@ -72,8 +102,7 @@ export function calculateExpensesChartData(transactions, categories, {
 
   filtered.forEach(t => {
     const val = Number(t.value) || 0;
-    const cat = catMap.get(String(t.categoryId || '')) ||
-      (t.categoryName ? catMap.get(String(t.categoryName).trim().toLowerCase()) : null);
+    const cat = resolveCategory(t);
 
     let key = '';
     let label = '';
@@ -82,8 +111,10 @@ export function calculateExpensesChartData(transactions, categories, {
       key = cat ? String(cat.id) : (t.categoryName ? String(t.categoryName).trim() : 'Outros');
       label = cat ? cat.name : (t.categoryName ? String(t.categoryName).trim() : 'Outros');
     } else if (groupMode === 'type') {
-      key = cat ? String(cat.type) : 'Outros';
-      label = cat ? cat.type : 'Outros';
+      const rawType = cat ? cat.type : t.categoryType;
+      const normType = rawType ? normalizeCategoryType(rawType) : 'Outras Despesas';
+      key = normType;
+      label = normType;
     } else if (groupMode === 'tag') {
       const rawTag = (t.tag && typeof t.tag === 'string') ? t.tag.trim() : '';
       key = rawTag || 'Sem Classificação';
@@ -96,13 +127,27 @@ export function calculateExpensesChartData(transactions, categories, {
     groups.get(key).total += val;
   });
 
-  // Converte para lista ordenada por maior valor
-  const items = Array.from(groups.values()).sort((a, b) => b.total - a.total);
-  const totalExpenses = items.reduce((acc, curr) => acc + curr.total, 0);
+  // Arredonda os totais dos grupos a 2 casas decimais
+  groups.forEach(g => {
+    g.total = Math.round(g.total * 100) / 100;
+  });
 
-  // Calcula percentuais e cores
+  // Total líquido de todas as despesas computadas (incluindo estornos e saldos negativos)
+  const allGroupsRawTotal = Array.from(groups.values()).reduce((acc, curr) => acc + curr.total, 0);
+  const totalExpenses = Math.max(Math.round(allGroupsRawTotal * 100) / 100, 0);
+
+  // Converte para lista ordenada por maior valor positivo (itens com saldo <= 0 não ocupam fatia positiva no Donut)
+  const items = Array.from(groups.values())
+    .filter(g => g.total > 0)
+    .sort((a, b) => b.total - a.total);
+
+  // Base para distribuição das fatias da rosca e barras de progresso (soma das despesas positivas)
+  const positiveGrossTotal = items.reduce((acc, curr) => acc + curr.total, 0);
+  const baseForDistribution = positiveGrossTotal > 0 ? positiveGrossTotal : totalExpenses;
+
+  // Calcula percentuais e cores garantindo limite de 100%
   items.forEach((item, idx) => {
-    item.percentage = totalExpenses > 0 ? (item.total / totalExpenses) * 100 : 0;
+    item.percentage = baseForDistribution > 0 ? Math.min((item.total / baseForDistribution) * 100, 100) : 0;
     item.color = CHART_PALETTE[idx % CHART_PALETTE.length];
   });
 
@@ -122,11 +167,7 @@ export function calculateExpensesChartData(transactions, categories, {
  */
 export function calculateMonthlyEvolutionData(transactions, categories, year = AppState.selectedYear) {
   const targetYear = Number(year);
-  const catMap = new Map();
-  (categories || []).forEach(c => {
-    if (c.id) catMap.set(String(c.id), c);
-    if (c.name) catMap.set(String(c.name).trim().toLowerCase(), c);
-  });
+  const resolveCategory = createCategoryResolver(categories);
 
   const monthlyTotals = Array.from({ length: 12 }, (_, i) => ({
     monthIndex: i,
@@ -142,18 +183,26 @@ export function calculateMonthlyEvolutionData(transactions, categories, year = A
     if (m < 0 || m > 11) return;
 
     const val = Number(t.value) || 0;
-    if (val <= 0) return;
+    if (val === 0) return;
 
-    const cat = catMap.get(String(t.categoryId || '')) ||
-      (t.categoryName ? catMap.get(String(t.categoryName).trim().toLowerCase()) : null);
-    const typeConfig = cat ? CATEGORY_TYPES.find(ct => ct.id === cat.type) : null;
-    const isRev = typeConfig ? typeConfig.isRevenue : false;
+    const cat = resolveCategory(t);
+    const rawType = cat ? cat.type : t.categoryType;
+    const normType = rawType ? normalizeCategoryType(rawType) : null;
+    const typeConfig = normType ? CATEGORY_TYPES.find(ct => ct.id === normType) : null;
+    const isRev = typeConfig 
+      ? Boolean(typeConfig.isRevenue) 
+      : Boolean(t.isRevenue === true || normType === 'Receita' || normType === 'Repasse');
 
     if (isRev) {
       monthlyTotals[m].revenues += val;
     } else {
       monthlyTotals[m].expenses += val;
     }
+  });
+
+  monthlyTotals.forEach(m => {
+    m.expenses = Math.round(Math.max(m.expenses, 0) * 100) / 100;
+    m.revenues = Math.round(Math.max(m.revenues, 0) * 100) / 100;
   });
 
   const maxExpense = Math.max(...monthlyTotals.map(m => m.expenses), 1);
@@ -186,10 +235,14 @@ export function renderDonutChartSVG(items, totalExpenses) {
   }
 
   let accumulatedDash = 0;
+  const positiveGrossTotal = items.reduce((acc, curr) => acc + curr.total, 0);
+  const baseForSlices = positiveGrossTotal > 0 ? positiveGrossTotal : totalExpenses;
+
   const slices = items.map((item, idx) => {
-    const dashLength = (item.total / totalExpenses) * circumference;
+    const dashLength = baseForSlices > 0 ? (item.total / baseForSlices) * circumference : 0;
     const offset = -accumulatedDash;
     accumulatedDash += dashLength;
+    const remainingDash = Math.max(circumference - dashLength, 0);
 
     return `
       <circle 
@@ -199,7 +252,7 @@ export function renderDonutChartSVG(items, totalExpenses) {
         fill="none" 
         stroke="${item.color}" 
         stroke-width="${strokeWidth}" 
-        stroke-dasharray="${dashLength.toFixed(2)} ${(circumference - dashLength).toFixed(2)}" 
+        stroke-dasharray="${dashLength.toFixed(2)} ${remainingDash.toFixed(2)}" 
         stroke-dashoffset="${offset.toFixed(2)}"
         class="donut-slice" 
         data-index="${idx}"
@@ -250,7 +303,7 @@ export function renderRankingListHTML(items, totalExpenses) {
             </div>
           </div>
           <div class="ranking-bar-bg">
-            <div class="ranking-bar-fill" style="width: ${item.percentage.toFixed(1)}%; background: ${item.color};"></div>
+            <div class="ranking-bar-fill" style="width: ${Math.min(Math.max(item.percentage, 0), 100).toFixed(1)}%; background: ${item.color};"></div>
           </div>
         </div>
       `).join('')}
@@ -314,10 +367,6 @@ export function renderChartsModal() {
   if (DOM.chartMonthSelect) {
     DOM.chartMonthSelect.value = String(currentMonth);
     DOM.chartMonthSelect.classList.toggle('active', currentPeriodMode === 'month');
-  }
-  if (DOM.btnChartPeriodMonth) {
-    DOM.btnChartPeriodMonth.textContent = `Mês Atual (${MONTH_SHORT[currentMonth]})`;
-    DOM.btnChartPeriodMonth.classList.toggle('active', currentPeriodMode === 'month');
   }
   if (DOM.btnChartPeriodYear) {
     DOM.btnChartPeriodYear.textContent = `Ano Inteiro (${currentYear})`;
@@ -510,9 +559,21 @@ export function onChartMonthChange(newMonthIndex) {
     });
   }
 
+  // Se houver edição em andamento, cancela para não salvar no mês incorreto
+  if (AppState.editingTransactionId) {
+    if (typeof window !== 'undefined' && typeof window.Financas?.cancelEditingTransaction === 'function') {
+      window.Financas.cancelEditingTransaction();
+    }
+  }
+
   // Atualiza os dados do Dashboard em segundo plano
   if (typeof window !== 'undefined' && window.Financas && typeof window.Financas.renderDashboard === 'function') {
     window.Financas.renderDashboard();
+  }
+
+  // Se o usuário estiver na tela de categoria, atualiza também a tabela de lançamentos
+  if (AppState.currentRoute === 'category' && typeof window !== 'undefined' && window.Financas && typeof window.Financas.renderTransactionsTable === 'function') {
+    window.Financas.renderTransactionsTable();
   }
 
   // Re-renderiza o gráfico com o novo mês selecionado

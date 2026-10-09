@@ -15,10 +15,18 @@ import { triggerCloudSync } from './cloud.js';
 import { renderDashboard } from './dashboard.js';
 
 export function changeYear(delta) {
+  if (AppState.editingTransactionId) {
+    cancelEditingTransaction();
+  }
   AppState.selectedYear = Number(AppState.selectedYear) + delta;
   updateYearDisplay();
   renderTransactionsTable();
   renderDashboard();
+  if (DOM.modalChartsOverlay && DOM.modalChartsOverlay.classList.contains('active')) {
+    if (typeof window !== 'undefined' && typeof window.Financas?.renderChartsModal === 'function') {
+      window.Financas.renderChartsModal();
+    }
+  }
   showToast(`Ano selecionado: ${AppState.selectedYear}`);
 }
 
@@ -109,6 +117,12 @@ export function updateTransRepasseVisibility(category) {
   }
 }
 
+export const isParcelada = (installment) => {
+  if (!installment) return false;
+  const clean = String(installment).trim();
+  return /^\d+\s*\/\s*\d+$/.test(clean);
+};
+
 export function updateMonthTotal() {
   const activeCategory = AppState.categories.find(c => c.id === AppState.activeCategoryId);
   if (!activeCategory || !DOM.transTotalValue) return;
@@ -116,10 +130,20 @@ export function updateMonthTotal() {
   const currentMonth = Number(AppState.selectedMonthIndex);
   const currentYear = Number(AppState.selectedYear);
 
-  const filtered = AppState.transactions.filter(t => {
-    const matchCat = t.categoryId ? (t.categoryId === activeCategory.id) : (t.categoryName.trim().toLowerCase() === activeCategory.name.trim().toLowerCase());
+  let filtered = AppState.transactions.filter(t => {
+    const matchCat = t.categoryId 
+      ? (t.categoryId === activeCategory.id) 
+      : (t.categoryName.trim().toLowerCase() === activeCategory.name.trim().toLowerCase() &&
+         (t.categoryType ? normalizeCategoryType(t.categoryType) === normalizeCategoryType(activeCategory.type) : true));
     return matchCat && Number(t.monthIndex) === currentMonth && Number(t.year) === currentYear;
   });
+
+  const filtroTipo = DOM.filtroTipoCompra ? DOM.filtroTipoCompra.value : 'todos';
+  if (filtroTipo === 'unicas') {
+    filtered = filtered.filter(t => !isParcelada(t.installment));
+  } else if (filtroTipo === 'parceladas') {
+    filtered = filtered.filter(t => isParcelada(t.installment));
+  }
 
   const totalSum = filtered.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
   DOM.transTotalValue.textContent = formatCurrency(totalSum);
@@ -225,7 +249,10 @@ export function renderTransactionsTable() {
   const isFixedOrVariable = (categoryTypeNorm === 'Conta Fixa' || categoryTypeNorm === 'Variável Prevista' || categoryTypeNorm === 'Receita' || categoryTypeNorm === 'Repasse');
 
   const monthTransactions = AppState.transactions.filter(t => {
-    const matchCat = t.categoryId ? (t.categoryId === activeCategory.id) : (t.categoryName.trim().toLowerCase() === activeCategory.name.trim().toLowerCase());
+    const matchCat = t.categoryId 
+      ? (t.categoryId === activeCategory.id) 
+      : ((t.categoryName || '').trim().toLowerCase() === (activeCategory.name || '').trim().toLowerCase() &&
+         (t.categoryType ? normalizeCategoryType(t.categoryType) === normalizeCategoryType(activeCategory.type) : true));
     return matchCat && Number(t.monthIndex) === currentMonth && Number(t.year) === currentYear;
   });
 
@@ -233,15 +260,9 @@ export function renderTransactionsTable() {
 
   let filteredTransactions = monthTransactions;
   if (filtroTipo === 'unicas') {
-    filteredTransactions = monthTransactions.filter(t => {
-      const inst = t.installment !== undefined && t.installment !== null ? String(t.installment).trim() : '';
-      return !inst || inst === '-';
-    });
+    filteredTransactions = monthTransactions.filter(t => !isParcelada(t.installment));
   } else if (filtroTipo === 'parceladas') {
-    filteredTransactions = monthTransactions.filter(t => {
-      const inst = t.installment !== undefined && t.installment !== null ? String(t.installment) : '';
-      return inst.includes('/');
-    });
+    filteredTransactions = monthTransactions.filter(t => isParcelada(t.installment));
   }
 
   DOM.transactionTableBody.innerHTML = '';
@@ -358,6 +379,11 @@ export function renderTransactionsTable() {
         const commitValueChange = () => {
           const newVal = parseFloat(inlineInput.value);
           if (!isNaN(newVal) && newVal !== t.value) {
+            if (newVal === 0) {
+              showToast('O valor deve ser diferente de zero.', 'error');
+              inlineInput.value = Number(t.value).toFixed(2);
+              return;
+            }
             let propagateInline = false;
             if (t.groupId) {
               propagateInline = window.confirm(
@@ -412,24 +438,25 @@ export function deleteTransaction(id) {
   const hasGroupOccurrences = transaction.groupId && AppState.transactions.some(
     other => other.id !== transaction.id && other.groupId === transaction.groupId
   );
-  const isFraction = transaction.installment && transaction.installment.includes('/');
+  const isFraction = Boolean(
+    (transaction.installment && transaction.installment.includes('/')) ||
+    isParcelada(transaction.installment)
+  );
 
-  if (hasGroupOccurrences || isFraction) {
-    const deleteSubsequent = window.confirm(
-      "Deseja excluir também as parcelas/ocorrências dos meses seguintes?"
-    );
-
-    const result = deleteTransactionCascade(AppState.transactions, id, deleteSubsequent);
-    AppState.transactions = result.transactions;
-    showToast(deleteSubsequent ? "Lançamento e ocorrências seguintes excluídos com sucesso." : "Apenas o lançamento deste mês foi excluído.");
-  } else {
-    if (!window.confirm(`Deseja excluir o lançamento "${transaction.description}"?`)) {
-      return;
-    }
-    const result = deleteTransactionCascade(AppState.transactions, id, false);
-    AppState.transactions = result.transactions;
-    showToast("Lançamento excluído com sucesso.");
+  if (!window.confirm(`Deseja realmente excluir o lançamento "${transaction.description}"?`)) {
+    return;
   }
+
+  let deleteSubsequent = false;
+  if (hasGroupOccurrences || isFraction) {
+    deleteSubsequent = window.confirm(
+      "Deseja excluir também as parcelas/ocorrências dos meses seguintes?\n\n[OK] = Excluir este mês e os seguintes\n[Cancelar] = Excluir apenas a ocorrência deste mês"
+    );
+  }
+
+  const result = deleteTransactionCascade(AppState.transactions, id, deleteSubsequent);
+  AppState.transactions = result.transactions;
+  showToast(deleteSubsequent ? "Lançamento e ocorrências seguintes excluídos com sucesso." : "Apenas o lançamento deste mês foi excluído.");
 
   if (AppState.editingTransactionId === id) {
     cancelEditingTransaction();
@@ -482,35 +509,50 @@ export function handleTransactionSubmit(e) {
 
     if (existingIndex !== -1) {
       const existing = AppState.transactions[existingIndex];
+      const isFraction = Boolean(
+        isParcelada(existing.installment) ||
+        (existing.installment && existing.installment.includes('/')) ||
+        isParcelada(installmentRaw) ||
+        (installmentRaw && installmentRaw.includes('/'))
+      );
       const hasGroupId = Boolean(existing.groupId);
       let propagateToFuture = false;
 
-      if (hasGroupId) {
+      if (hasGroupId || isFraction) {
         propagateToFuture = window.confirm(
-          "Deseja aplicar essa alteração (Valor/Descrição/Classificação) também para os meses seguintes?"
+          "Deseja aplicar essa alteração (Valor/Descrição/Classificação/Parcelas) também para os meses seguintes?"
         );
       }
 
-      const result = updateTransactionCascade(
-        AppState.transactions,
-        AppState.editingTransactionId,
-        { description: descVal, value: valNum, installment: installmentRaw || '-', tag: tagToSave },
-        propagateToFuture
-      );
+      try {
+        const result = updateTransactionCascade(
+          AppState.transactions,
+          AppState.editingTransactionId,
+          { description: descVal, value: valNum, installment: installmentRaw || '-', tag: tagToSave },
+          propagateToFuture
+        );
 
-      AppState.transactions = result.transactions;
-      saveTransactions(AppState.transactions);
-      triggerCloudSync();
-      cancelEditingTransaction();
-      renderTransactionsTable();
-      renderDashboard();
+        AppState.transactions = result.transactions;
+        saveTransactions(AppState.transactions);
+        triggerCloudSync();
+        cancelEditingTransaction();
+        renderTransactionsTable();
+        renderDashboard();
 
-      if (propagateToFuture) {
-        showToast(`Alteração aplicada neste mês e nos ${result.updatedCount - 1} meses seguintes!`);
-      } else {
-        showToast('Alteração aplicada apenas neste mês.');
+        if (propagateToFuture) {
+          showToast(`Alteração aplicada neste mês e nos ${result.updatedCount - 1} meses seguintes!`);
+        } else {
+          showToast('Alteração aplicada apenas neste mês.');
+        }
+        return;
+      } catch (err) {
+        if (DOM.transInstallmentError) DOM.transInstallmentError.textContent = err.message || 'Erro no parcelamento.';
+        if (DOM.transInstallmentInput) {
+          DOM.transInstallmentInput.style.borderColor = 'var(--danger)';
+          DOM.transInstallmentInput.focus();
+        }
+        return;
       }
-      return;
     } else {
       cancelEditingTransaction();
     }
@@ -576,9 +618,11 @@ export function handleTransactionSubmit(e) {
   }
 }
 
-export function renderTagSelectOptions(selectedTag = '') {
+export function renderTagSelectOptions(selectedTag) {
   if (!DOM.itemTag) return;
-  const current = selectedTag !== undefined ? String(selectedTag).trim() : (DOM.itemTag.value || '');
+  const current = (selectedTag !== undefined && selectedTag !== null) 
+    ? String(selectedTag).trim() 
+    : (DOM.itemTag.value || '').trim();
   const tags = (Array.isArray(AppState.tags)) ? AppState.tags : [];
 
   let html = '<option value="">Selecione uma classificação...</option>';
@@ -665,8 +709,12 @@ export function deleteTagFromModal(tagName) {
   AppState.tags = AppState.tags.filter(t => t.toLowerCase() !== tagName.toLowerCase());
   saveTags(AppState.tags);
 
+  if (DOM.itemTag && DOM.itemTag.value.toLowerCase() === tagName.toLowerCase()) {
+    DOM.itemTag.value = '';
+  }
+
   renderManageTagsList();
-  renderTagSelectOptions();
+  renderTagSelectOptions(DOM.itemTag ? DOM.itemTag.value : '');
   showToast(`Classificação "${tagName}" removida da lista.`, 'info');
 }
 
