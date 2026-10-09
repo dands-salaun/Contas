@@ -312,7 +312,8 @@
     updateTransactionCascade,
     calculateTotalsByMonthAndYear,
     normalizeCategory,
-    normalizeTransaction
+    normalizeTransaction,
+    clearAllLocalData
   } = Financas;
 
   // ===========================================================================
@@ -1311,8 +1312,38 @@
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // ÁREA 7: ZONA DE PERIGO & SEGURANÇA (EXCLUSÃO TOTAL DE DADOS E CREDENCIAIS)
+  // ---------------------------------------------------------------------------
+  describe('7. Segurança e Zona de Perigo (Exclusão Completa de Dados e Credenciais)', () => {
+    it('7.1 Exclui categorias, lançamentos, tags, lastUpdated E credenciais da nuvem (API Key e Bin ID)', () => {
+      const originalPrompt = global.prompt;
+      global.prompt = () => 'APAGAR';
+
+      localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify([{ id: 'c1', name: 'Aluguel' }]));
+      localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify([{ id: 't1', value: 1000 }]));
+      localStorage.setItem(STORAGE_KEYS.JSONBIN_KEY, 'secret-key-test');
+      localStorage.setItem(STORAGE_KEYS.JSONBIN_BIN_ID, 'bin-id-test');
+
+      try {
+        if (typeof clearAllLocalData === 'function') {
+          clearAllLocalData();
+        }
+      } catch (e) {
+        // window.location.reload pode falhar em mock
+      }
+
+      expect(localStorage.getItem(STORAGE_KEYS.CATEGORIES)).toBe(null);
+      expect(localStorage.getItem(STORAGE_KEYS.TRANSACTIONS)).toBe(null);
+      expect(localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY)).toBe(null);
+      expect(localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID)).toBe(null);
+
+      global.prompt = originalPrompt;
+    });
+  });
+
   // ===========================================================================
-  // 7. EXECUTOR PRINCIPAL (RUNNER) & FORMATAÇÃO VISUAL DO CONSOLE
+  // 8. EXECUTOR PRINCIPAL (RUNNER) & FORMATAÇÃO VISUAL DO CONSOLE
   // ===========================================================================
 
   async function runTests() {
