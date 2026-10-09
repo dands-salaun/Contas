@@ -1471,17 +1471,25 @@ function areStatesEqual(localState, remoteRecord) {
 
 let isCheckingStartupCloud = false;
 
+function resetStartupSyncLock() {
+  isCheckingStartupCloud = false;
+}
+
 /**
  * Verificação e Sincronização Inteligente de Inicialização
  * Executada sempre ao abrir o SPA e ao retornar o foco à aba.
  */
-async function checkAndSyncCloudOnStartup({ silent = true, showNotification = true } = {}) {
+async function checkAndSyncCloudOnStartup({ silent = true, showNotification = true, force = false } = {}) {
   const apiKey = (localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
   const binId = (localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
 
   if (!apiKey || !binId) {
     setCloudStatus('disconnected', '☁️ Nuvem Atualizada');
     return { status: 'disconnected' };
+  }
+
+  if (force) {
+    isCheckingStartupCloud = false;
   }
 
   if (isCheckingStartupCloud) {
@@ -2500,7 +2508,8 @@ function importBackup(e) {
   e.target.value = '';
 }
 
-function clearAllLocalData() {
+function clearAllLocalData(options = {}) {
+  const skipReload = options && options.skipReload === true;
   const userInput = window.prompt(
     "Esta ação é irreversível. Para confirmar a exclusão de TODOS os dados locais, digite a palavra APAGAR:"
   );
@@ -2536,11 +2545,16 @@ function clearAllLocalData() {
     }
 
     showToast('Dados e credenciais apagados com sucesso. O sistema será reiniciado.', 'success');
-    setTimeout(() => window.location.reload(), 1200);
+
+    const isTestEnv = (typeof window !== 'undefined') && (Boolean(window.__TEST_RUNNER__) || Boolean(window.__FINANCAS_TEST_ENV__));
+    if (!skipReload && !isTestEnv && typeof window !== 'undefined' && window.location) {
+      setTimeout(() => window.location.reload(), 1200);
+    }
   } else {
     showToast('Ação cancelada. Seus dados estão seguros.', 'info');
   }
 }
+
 
 // --- MÓDULO: js/transactions.js ---
 /**
@@ -3480,6 +3494,7 @@ window.Financas = {
   areStatesEqual,
   refreshUI,
   checkAndSyncCloudOnStartup,
+  resetStartupSyncLock,
   setupCloudFocusListener,
   handleCurrencyInput,
   parseCurrencyToFloat,
@@ -3501,7 +3516,7 @@ window.Financas = {
 
 window.showToast = showToast;
 
-if (typeof document !== 'undefined') {
+if (typeof document !== 'undefined' && !window.__TEST_RUNNER__ && !window.__FINANCAS_TEST_ENV__) {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {

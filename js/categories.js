@@ -234,7 +234,8 @@ export function importBackup(e) {
   e.target.value = '';
 }
 
-export function clearAllLocalData() {
+export function clearAllLocalData(options = {}) {
+  const skipReload = options && options.skipReload === true;
   const userInput = window.prompt(
     "Esta ação é irreversível. Para confirmar a exclusão de TODOS os dados locais, digite a palavra APAGAR:"
   );
@@ -270,8 +271,13 @@ export function clearAllLocalData() {
     }
 
     showToast('Dados e credenciais apagados com sucesso. O sistema será reiniciado.', 'success');
-    setTimeout(() => window.location.reload(), 1200);
+
+    const isTestEnv = (typeof window !== 'undefined') && (Boolean(window.__TEST_RUNNER__) || Boolean(window.__FINANCAS_TEST_ENV__));
+    if (!skipReload && !isTestEnv && typeof window !== 'undefined' && window.location) {
+      setTimeout(() => window.location.reload(), 1200);
+    }
   } else {
     showToast('Ação cancelada. Seus dados estão seguros.', 'info');
   }
 }
+

@@ -264,7 +264,11 @@
     </p>
   </div>
 
-  <!-- Scripts da aplicação e suíte de testes -->
+  <!-- Configuração de ambiente de testes para isolamento e prevenção de recarregamentos -->
+  <script>
+    window.__TEST_RUNNER__ = true;
+    window.__FINANCAS_TEST_ENV__ = true;
+  </script>
   <script src="app.js"></script>
   <script src="app.test.js"></script>
 

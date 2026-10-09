@@ -311,6 +311,7 @@ window.Financas = {
   areStatesEqual,
   refreshUI,
   checkAndSyncCloudOnStartup,
+  resetStartupSyncLock,
   setupCloudFocusListener,
   handleCurrencyInput,
   parseCurrencyToFloat,
@@ -332,7 +333,7 @@ window.Financas = {
 
 window.showToast = showToast;
 
-if (typeof document !== 'undefined') {
+if (typeof document !== 'undefined' && !window.__TEST_RUNNER__ && !window.__FINANCAS_TEST_ENV__) {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {

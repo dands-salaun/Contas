@@ -1329,7 +1329,7 @@
 
       try {
         if (typeof clearAllLocalData === 'function') {
-          clearAllLocalData();
+          clearAllLocalData({ skipReload: true });
         }
       } catch (e) {
         // window.location.reload pode falhar em mock
@@ -1379,13 +1379,17 @@
     it('8.3 checkAndSyncCloudOnStartup: se não configurado, retorna status disconnected', async () => {
       localStorage.removeItem(STORAGE_KEYS.JSONBIN_KEY);
       localStorage.removeItem(STORAGE_KEYS.JSONBIN_BIN_ID);
-      const res = await checkAndSyncCloudOnStartup();
+      const res = await checkAndSyncCloudOnStartup({ force: true });
       expect(res.status).toBe('disconnected');
     });
 
     it('8.4 checkAndSyncCloudOnStartup: atualiza sessão local quando a nuvem tiver dados mais novos', async () => {
       localStorage.setItem(STORAGE_KEYS.JSONBIN_KEY, 'key_123');
       localStorage.setItem(STORAGE_KEYS.JSONBIN_BIN_ID, 'bin_456');
+
+      if (typeof Financas.resetStartupSyncLock === 'function') {
+        Financas.resetStartupSyncLock();
+      }
 
       const originalFetch = global.fetch;
       const remoteData = {
@@ -1404,7 +1408,7 @@
       Financas.AppState.categories = [];
       Financas.AppState.transactions = [];
 
-      const result = await checkAndSyncCloudOnStartup({ silent: true, showNotification: false });
+      const result = await checkAndSyncCloudOnStartup({ silent: true, showNotification: false, force: true });
       expect(result.status).toBe('updated_from_cloud');
       expect(Financas.AppState.categories.length).toBe(1);
       expect(Financas.AppState.categories[0].name).toBe('Investimentos');
