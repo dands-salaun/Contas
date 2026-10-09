@@ -1420,8 +1420,148 @@
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // ÁREA 9: VISUALIZAÇÃO GRÁFICA E AGRUPAMENTO (MENSAL E ANUAL)
+  // ---------------------------------------------------------------------------
+  describe('9. Visualização Gráfica e Análise de Despesas (Mensal e Anual)', () => {
+    const testCategories = [
+      { id: 'c_salario', name: 'Salário', type: 'Receita' },
+      { id: 'c_aluguel', name: 'Aluguel', type: 'Conta Fixa' },
+      { id: 'c_mercado', name: 'Mercado', type: 'Variável Prevista' },
+      { id: 'c_cartao', name: 'Cartão Black', type: 'Cartão de Crédito' }
+    ];
+
+    const testTransactions = [
+      // 2026 - Mês 0 (Janeiro)
+      { id: 't1', categoryId: 'c_salario', value: 5000, monthIndex: 0, year: 2026, description: 'Salário', tag: 'Trabalho' },
+      { id: 't2', categoryId: 'c_aluguel', value: 2000, monthIndex: 0, year: 2026, description: 'Aluguel Jan', tag: 'Moradia' },
+      { id: 't3', categoryId: 'c_mercado', value: 800, monthIndex: 0, year: 2026, description: 'Compras Jan', tag: 'Alimentação' },
+      { id: 't4', categoryId: 'c_cartao', value: 1200, monthIndex: 0, year: 2026, description: 'Fatura Jan', tag: '' },
+
+      // 2026 - Mês 1 (Fevereiro)
+      { id: 't5', categoryId: 'c_aluguel', value: 2000, monthIndex: 1, year: 2026, description: 'Aluguel Fev', tag: 'Moradia' },
+      { id: 't6', categoryId: 'c_mercado', value: 1000, monthIndex: 1, year: 2026, description: 'Compras Fev', tag: 'Alimentação' },
+
+      // 2027 - Mês 0 (Outro ano - não deve entrar em 2026)
+      { id: 't7', categoryId: 'c_aluguel', value: 2500, monthIndex: 0, year: 2027, description: 'Aluguel 2027', tag: 'Moradia' }
+    ];
+
+    it('9.1 calculateExpensesChartData: filtra por mês e ano selecionados, ignora receitas e calcula percentuais', () => {
+      const data = Financas.calculateExpensesChartData(testTransactions, testCategories, {
+        periodMode: 'month',
+        groupMode: 'category',
+        monthIndex: 0,
+        year: 2026
+      });
+
+      // Total esperado de despesas em Janeiro/2026: 2000 (aluguel) + 800 (mercado) + 1200 (cartão) = 4000
+      // Salário (5000) deve ser ignorado por ser Receita
+      expect(data.totalExpenses).toBe(4000);
+      expect(data.items.length).toBe(3);
+
+      // Primeiro item deve ser o maior: Aluguel (2000 / 4000 = 50%)
+      expect(data.items[0].label).toBe('Aluguel');
+      expect(data.items[0].total).toBe(2000);
+      expect(Math.round(data.items[0].percentage)).toBe(50);
+
+      // Segundo: Cartão Black (1200 / 4000 = 30%)
+      expect(data.items[1].label).toBe('Cartão Black');
+      expect(data.items[1].total).toBe(1200);
+      expect(Math.round(data.items[1].percentage)).toBe(30);
+
+      // Terceiro: Mercado (800 / 4000 = 20%)
+      expect(data.items[2].label).toBe('Mercado');
+      expect(data.items[2].total).toBe(800);
+      expect(Math.round(data.items[2].percentage)).toBe(20);
+
+      // Soma dos percentuais deve ser 100%
+      const sumPct = data.items.reduce((acc, c) => acc + c.percentage, 0);
+      expect(Math.round(sumPct)).toBe(100);
+    });
+
+    it('9.2 calculateExpensesChartData: modo anual soma os 12 meses do ano e isola outros anos', () => {
+      const data = Financas.calculateExpensesChartData(testTransactions, testCategories, {
+        periodMode: 'year',
+        groupMode: 'category',
+        year: 2026
+      });
+
+      // Em 2026 completo:
+      // Jan: 2000 + 800 + 1200 = 4000
+      // Fev: 2000 + 1000 = 3000
+      // Total 2026: 7000 (O lançamento de 2500 de 2027 NÃO pode entrar)
+      expect(data.totalExpenses).toBe(7000);
+
+      const aluguelItem = data.items.find(i => i.label === 'Aluguel');
+      expect(aluguelItem.total).toBe(4000); // 2000 Jan + 2000 Fev
+
+      const mercadoItem = data.items.find(i => i.label === 'Mercado');
+      expect(mercadoItem.total).toBe(1800); // 800 Jan + 1000 Fev
+    });
+
+    it('9.3 calculateExpensesChartData: agrupa corretamente por Tipo e por Tag', () => {
+      // Agrupamento por Tipo em Janeiro/2026
+      const byType = Financas.calculateExpensesChartData(testTransactions, testCategories, {
+        periodMode: 'month',
+        groupMode: 'type',
+        monthIndex: 0,
+        year: 2026
+      });
+      expect(byType.items.length).toBe(3);
+      const fixa = byType.items.find(i => i.label === 'Conta Fixa');
+      expect(fixa.total).toBe(2000);
+
+      // Agrupamento por Tag em Janeiro/2026
+      const byTag = Financas.calculateExpensesChartData(testTransactions, testCategories, {
+        periodMode: 'month',
+        groupMode: 'tag',
+        monthIndex: 0,
+        year: 2026
+      });
+      const moradiaTag = byTag.items.find(i => i.label === 'Moradia');
+      expect(moradiaTag.total).toBe(2000);
+      const semClassifTag = byTag.items.find(i => i.label === 'Sem Classificação');
+      expect(semClassifTag.total).toBe(1200); // Cartão Black não tinha tag
+    });
+
+    it('9.4 calculateMonthlyEvolutionData: retorna os 12 meses com despesas, receitas e maxExpense', () => {
+      const evo = Financas.calculateMonthlyEvolutionData(testTransactions, testCategories, 2026);
+      expect(evo.monthlyTotals.length).toBe(12);
+      expect(evo.monthlyTotals[0].monthName).toBe('Janeiro');
+      expect(evo.monthlyTotals[0].expenses).toBe(4000);
+      expect(evo.monthlyTotals[0].revenues).toBe(5000);
+      expect(evo.monthlyTotals[1].expenses).toBe(3000);
+      expect(evo.monthlyTotals[1].revenues).toBe(0);
+      expect(evo.maxExpense).toBe(4000);
+    });
+
+    it('9.5 renderDonutChartSVG: renderiza SVG válido e lida com estado vazio sem quebrar', () => {
+      const emptySVG = Financas.renderDonutChartSVG([], 0);
+      expect(emptySVG.includes('<svg')).toBe(true);
+      expect(emptySVG.includes('Sem Gastos')).toBe(true);
+
+      const filledItems = [
+        { label: 'Aluguel', total: 2000, percentage: 66.7, color: '#3b82f6' },
+        { label: 'Mercado', total: 1000, percentage: 33.3, color: '#ef4444' }
+      ];
+      const filledSVG = Financas.renderDonutChartSVG(filledItems, 3000);
+      expect(filledSVG.includes('<svg')).toBe(true);
+      expect(filledSVG.includes('donut-slice')).toBe(true);
+      expect(filledSVG.includes('Total Gasto')).toBe(true);
+    });
+
+    it('9.6 onChartMonthChange: altera mês ativo, atualiza AppState.selectedMonthIndex e recalcula dados do gráfico', () => {
+      Financas.AppState.selectedMonthIndex = 0; // Janeiro
+      Financas.onChartMonthChange(5); // Muda para Junho (índice 5)
+      expect(Financas.AppState.selectedMonthIndex).toBe(5);
+
+      Financas.onChartMonthChange(10); // Muda para Novembro (índice 10)
+      expect(Financas.AppState.selectedMonthIndex).toBe(10);
+    });
+  });
+
   // ===========================================================================
-  // 9. EXECUTOR PRINCIPAL (RUNNER) & FORMATAÇÃO VISUAL DO CONSOLE
+  // 10. EXECUTOR PRINCIPAL (RUNNER) & FORMATAÇÃO VISUAL DO CONSOLE
   // ===========================================================================
 
   async function runTests() {

@@ -29,6 +29,7 @@ MODULES_ORDER = [
     "router.js",
     "sidebar.js",
     "dashboard.js",
+    "charts.js",
     "categories.js",
     "transactions.js",
 ]
@@ -201,10 +202,33 @@ function setupEventListeners() {
     });
   }
 
+  if (DOM.btnOpenChartsModal) DOM.btnOpenChartsModal.addEventListener('click', openChartsModal);
+  if (DOM.btnCloseChartsModal) DOM.btnCloseChartsModal.addEventListener('click', closeChartsModal);
+  if (DOM.btnDoneChartsModal) DOM.btnDoneChartsModal.addEventListener('click', closeChartsModal);
+  if (DOM.modalChartsOverlay) {
+    DOM.modalChartsOverlay.addEventListener('click', (e) => {
+      if (e.target === DOM.modalChartsOverlay) closeChartsModal();
+    });
+  }
+  if (DOM.chartMonthSelect) {
+    DOM.chartMonthSelect.addEventListener('change', (e) => {
+      onChartMonthChange(e.target.value);
+    });
+  }
+  if (DOM.btnChartPeriodMonth) DOM.btnChartPeriodMonth.addEventListener('click', () => setChartPeriodMode('month'));
+  if (DOM.btnChartPeriodYear) DOM.btnChartPeriodYear.addEventListener('click', () => setChartPeriodMode('year'));
+  if (DOM.btnChartGroupCategory) DOM.btnChartGroupCategory.addEventListener('click', () => setChartGroupMode('category'));
+  if (DOM.btnChartGroupType) DOM.btnChartGroupType.addEventListener('click', () => setChartGroupMode('type'));
+  if (DOM.btnChartGroupTag) DOM.btnChartGroupTag.addEventListener('click', () => setChartGroupMode('tag'));
+
   if (DOM.btnClearAllData) DOM.btnClearAllData.addEventListener('click', clearAllLocalData);
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (DOM.modalChartsOverlay && DOM.modalChartsOverlay.classList.contains('active')) {
+        closeChartsModal();
+        return;
+      }
       if (DOM.modalManageTagsOverlay && DOM.modalManageTagsOverlay.classList.contains('active')) {
         closeManageTagsModal();
         return;
@@ -328,6 +352,17 @@ window.Financas = {
   renderDashboard,
   renderDashboardTables,
   renderSpreadsheetBlock,
+  calculateExpensesChartData,
+  calculateMonthlyEvolutionData,
+  renderDonutChartSVG,
+  renderRankingListHTML,
+  renderAnnualEvolutionHTML,
+  openChartsModal,
+  closeChartsModal,
+  setChartPeriodMode,
+  setChartGroupMode,
+  renderChartsModal,
+  onChartMonthChange,
   init
 };
 

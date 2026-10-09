@@ -106,5 +106,24 @@ export const DOM = {
   get transTotalValue() { return get('transTotalValue'); },
   get transCountLabel() { return get('transCountLabel'); },
   get emptyTransState() { return get('emptyTransState'); },
-  get filtroTipoCompra() { return get('filtroTipoCompra'); }
+  get filtroTipoCompra() { return get('filtroTipoCompra'); },
+
+  // Visualização Gráfica (Modal de Gráficos)
+  get btnOpenChartsModal() { return get('btnOpenChartsModal'); },
+  get modalChartsOverlay() { return get('modalChartsOverlay'); },
+  get btnCloseChartsModal() { return get('btnCloseChartsModal'); },
+  get btnDoneChartsModal() { return get('btnDoneChartsModal'); },
+  get chartsModalSubtitle() { return get('chartsModalSubtitle'); },
+  get chartMonthSelect() { return get('chartMonthSelect'); },
+  get btnChartPeriodMonth() { return get('btnChartPeriodMonth'); },
+  get btnChartPeriodYear() { return get('btnChartPeriodYear'); },
+  get btnChartGroupCategory() { return get('btnChartGroupCategory'); },
+  get btnChartGroupType() { return get('btnChartGroupType'); },
+  get btnChartGroupTag() { return get('btnChartGroupTag'); },
+  get chartsTotalExpensesVal() { return get('chartsTotalExpensesVal'); },
+  get chartsCountLabel() { return get('chartsCountLabel'); },
+  get donutContainer() { return get('donutContainer'); },
+  get rankingContainer() { return get('rankingContainer'); },
+  get evolutionContainer() { return get('evolutionContainer'); }
 };
+

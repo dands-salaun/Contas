@@ -2313,3 +2313,421 @@ td.valor-credito,
     width: 100%;
   }
 }
+
+/* ==========================================================================
+   VISUALIZAÇÃO GRÁFICA - MODAL DE ANÁLISE DE GASTOS & SVG CHARTS
+   ========================================================================== */
+
+.modal-card-charts {
+  width: 860px;
+  max-width: 95vw;
+  height: 720px;
+  max-height: 92vh;
+  min-height: 540px;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-card-charts .modal-body {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  padding: 16px 22px 20px 22px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.charts-controls-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 4px;
+}
+
+.segmented-group {
+  display: inline-flex;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 3px;
+}
+
+.segmented-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 6px 14px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.segmented-btn:hover {
+  color: var(--text-main);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.segmented-btn.active {
+  background-color: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.35);
+}
+
+.chart-month-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.chart-month-dropdown {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 6px 28px 6px 14px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  font-family: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  outline: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  white-space: nowrap;
+}
+
+.chart-month-dropdown:hover {
+  color: var(--text-main);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.chart-month-dropdown.active {
+  background-color: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.35);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+}
+
+.chart-month-dropdown option {
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  padding: 6px;
+}
+
+.charts-summary-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 12px 18px;
+  margin: 4px 0 12px 0;
+}
+
+.charts-summary-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.charts-summary-title {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.charts-count-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.charts-summary-val-wrap {
+  text-align: right;
+}
+
+.charts-summary-val {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--danger);
+}
+
+.charts-content-grid {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 20px;
+  align-items: stretch;
+  height: 250px;
+  min-height: 250px;
+}
+
+@media (max-width: 768px) {
+  .charts-content-grid {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: auto;
+    gap: 16px;
+  }
+}
+
+/* Donut Chart SVG */
+.donut-chart-wrapper {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  min-height: 250px;
+}
+
+.donut-chart-svg {
+  width: 100%;
+  max-width: 240px;
+  height: auto;
+  overflow: visible;
+}
+
+.donut-slice {
+  cursor: pointer;
+  transition: stroke-width 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+  transform-origin: center;
+}
+
+.donut-slice:hover,
+.donut-slice.slice-hover {
+  stroke-width: 32px;
+  opacity: 0.95;
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.25));
+}
+
+.donut-center-label {
+  fill: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.donut-center-val {
+  fill: var(--text-main);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.donut-center-pct {
+  fill: var(--primary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Ranking de Despesas com Barras */
+.charts-ranking-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 250px;
+}
+
+.charts-ranking-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  max-height: 250px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.ranking-item {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-surface);
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+  cursor: default;
+}
+
+.ranking-item:hover,
+.ranking-item.highlighted {
+  background-color: var(--bg-surface-hover);
+  border-color: var(--border-color);
+  transform: translateX(2px);
+}
+
+.ranking-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+}
+
+.ranking-label-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.ranking-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ranking-label {
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ranking-values-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.ranking-val {
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.ranking-pct {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  min-width: 38px;
+  text-align: right;
+}
+
+.ranking-bar-bg {
+  width: 100%;
+  height: 6px;
+  background-color: var(--bg-input);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.ranking-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+/* Evolução Anual (12 Meses) */
+.charts-evolution-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.charts-evolution-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.charts-evolution-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.charts-evolution-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 6px;
+  align-items: end;
+  height: 110px;
+  padding: 10px 4px 22px 4px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  position: relative;
+}
+
+.evolution-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  justify-content: flex-end;
+  position: relative;
+  cursor: pointer;
+}
+
+.evolution-bar-val {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: all 0.2s;
+  pointer-events: none;
+  position: absolute;
+  top: -18px;
+}
+
+.evolution-col:hover .evolution-bar-val {
+  opacity: 1;
+  transform: translateY(0);
+  color: var(--text-main);
+}
+
+.evolution-bar-track {
+  width: 100%;
+  max-width: 22px;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.evolution-bar {
+  width: 100%;
+  background: var(--primary);
+  border-radius: 3px 3px 0 0;
+  transition: height 0.3s ease, background-color 0.2s;
+  min-height: 4px;
+}
+
+.evolution-col:hover .evolution-bar {
+  background: var(--primary-hover);
+}
+
+.evolution-col.current-month .evolution-bar {
+  background: var(--warning);
+}
+
+.evolution-month-label {
+  position: absolute;
+  bottom: -20px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.evolution-col.current-month .evolution-month-label {
+  color: var(--warning);
+}
+
