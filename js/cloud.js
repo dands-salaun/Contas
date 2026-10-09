@@ -264,14 +264,7 @@ export async function syncFromCloud() {
 
     touchLastUpdated(cloudLastUpdated || Date.now());
 
-    localStorage.setItem(STORAGE_KEYS.JSONBIN_KEY, apiKey);
-    localStorage.setItem(STORAGE_KEYS.JSONBIN_BIN_ID, binId);
-
-    if (typeof window !== 'undefined' && window.Financas) {
-      if (typeof window.Financas.rebuildSidebar === 'function') window.Financas.rebuildSidebar();
-      if (typeof window.Financas.renderCategoryTable === 'function') window.Financas.renderCategoryTable();
-      if (typeof window.Financas.renderDashboard === 'function') window.Financas.renderDashboard();
-    }
+    refreshUI();
 
     setCloudStatus('synced', '☁️ Nuvem Atualizada');
     showToast(
@@ -288,6 +281,226 @@ export async function syncFromCloud() {
       DOM.btnSyncFromCloud.style.opacity = '';
     }
   }
+}
+
+/**
+ * Re-renderiza todos os componentes visuais dependentes dos dados do AppState
+ */
+export function refreshUI() {
+  if (typeof window !== 'undefined' && window.Financas) {
+    if (typeof window.Financas.renderTagSelectOptions === 'function') {
+      window.Financas.renderTagSelectOptions();
+    }
+    if (typeof window.Financas.renderManageTagsList === 'function') {
+      window.Financas.renderManageTagsList();
+    }
+    if (typeof window.Financas.rebuildSidebar === 'function') {
+      window.Financas.rebuildSidebar();
+    }
+    if (typeof window.Financas.renderCategoryTable === 'function') {
+      window.Financas.renderCategoryTable();
+    }
+    if (typeof window.Financas.renderDashboard === 'function') {
+      window.Financas.renderDashboard();
+    }
+    if (AppState.currentRoute === 'category' && typeof window.Financas.renderTransactionsTable === 'function') {
+      window.Financas.renderTransactionsTable();
+      if (typeof window.Financas.updateMonthTotal === 'function') {
+        window.Financas.updateMonthTotal();
+      }
+    }
+  }
+}
+
+/**
+ * Comparador de Estado / Fingerprint (inspirado em areMovieListsEqual do Multiverso)
+ * Detecta se categorias, lançamentos e tags locais e remotos são idênticos em conteúdo.
+ */
+export function areStatesEqual(localState, remoteRecord) {
+  if (!remoteRecord || typeof remoteRecord !== 'object') return false;
+
+  const remoteCats = Array.isArray(remoteRecord.categorias)
+    ? remoteRecord.categorias
+    : (Array.isArray(remoteRecord.categories) ? remoteRecord.categories : []);
+  const remoteTrans = Array.isArray(remoteRecord.lancamentos)
+    ? remoteRecord.lancamentos
+    : (Array.isArray(remoteRecord.transactions) ? remoteRecord.transactions : []);
+  const remoteTags = Array.isArray(remoteRecord.tags)
+    ? remoteRecord.tags
+    : (Array.isArray(remoteRecord.finance_tags) ? remoteRecord.finance_tags : []);
+
+  const localCats = Array.isArray(localState.categories) ? localState.categories : [];
+  const localTrans = Array.isArray(localState.transactions) ? localState.transactions : [];
+  const localTags = Array.isArray(localState.tags) ? localState.tags : [];
+
+  if (localCats.length !== remoteCats.length ||
+      localTrans.length !== remoteTrans.length ||
+      localTags.length !== remoteTags.length) {
+    return false;
+  }
+
+  // Fingerprint das categorias
+  const catFingerprint = (list) => list.map(c => 
+    `${String(c.id || '')}|${String(c.name || '').trim().toLowerCase()}|${String(c.type || '').trim().toLowerCase()}`
+  ).sort().join(';;');
+  if (catFingerprint(localCats) !== catFingerprint(remoteCats)) return false;
+
+  // Fingerprint das tags
+  const tagFingerprint = (list) => list.map(t => String(t || '').trim().toLowerCase()).sort().join(';;');
+  if (tagFingerprint(localTags) !== tagFingerprint(remoteTags)) return false;
+
+  // Fingerprint dos lançamentos
+  const transFingerprint = (list) => list.map(t => 
+    `${String(t.id || '')}|${Number(t.value || 0)}|${Number(t.monthIndex || 0)}|${Number(t.year || 0)}|${String(t.description || '').trim()}|${String(t.installment || '').trim()}|${Boolean(t.isPaid)}|${String(t.tag || '').trim()}|${String(t.groupId || '')}|${String(t.linkedId || '')}`
+  ).sort().join(';;');
+
+  return transFingerprint(localTrans) === transFingerprint(remoteTrans);
+}
+
+let isCheckingStartupCloud = false;
+
+/**
+ * Verificação e Sincronização Inteligente de Inicialização
+ * Executada sempre ao abrir o SPA e ao retornar o foco à aba.
+ */
+export async function checkAndSyncCloudOnStartup({ silent = true, showNotification = true } = {}) {
+  const apiKey = (localStorage.getItem(STORAGE_KEYS.JSONBIN_KEY) || '').trim();
+  const binId = (localStorage.getItem(STORAGE_KEYS.JSONBIN_BIN_ID) || '').trim();
+
+  if (!apiKey || !binId) {
+    setCloudStatus('disconnected', '☁️ Nuvem Atualizada');
+    return { status: 'disconnected' };
+  }
+
+  if (isCheckingStartupCloud) {
+    return { status: 'busy' };
+  }
+  isCheckingStartupCloud = true;
+
+  setCloudStatus('syncing', '🔄 Verificando nuvem...');
+
+  try {
+    const response = await fetch(`https://api.jsonbin.io/v3/b/${encodeURIComponent(binId)}/latest`, {
+      method: 'GET',
+      headers: {
+        'X-Master-Key': apiKey
+      }
+    });
+
+    if (!response.ok) {
+      console.warn(`[Cloud Startup Check] Status retornado: ${response.status}`);
+      setCloudStatus('error', '⚠️ Erro ao verificar nuvem');
+      return { status: 'error', code: response.status };
+    }
+
+    const data = await response.json();
+    const record = data?.record || data;
+
+    const incomingCats = record.categorias || record.categories || [];
+    const incomingTrans = record.lancamentos || record.transactions || [];
+    const incomingTags = record.tags || record.finance_tags || [];
+
+    if (!Array.isArray(incomingCats)) {
+      setCloudStatus('error', '⚠️ Formato de nuvem inválido');
+      return { status: 'invalid_format' };
+    }
+
+    const cloudLastUpdated = Number(record.lastUpdated) || 0;
+    const localLastUpdated = Number(AppState.lastUpdated) || 0;
+
+    const areEqual = areStatesEqual(AppState, record);
+
+    // 1. Conteúdo 100% igual: alinha timestamp se necessário e finaliza
+    if (areEqual) {
+      if (cloudLastUpdated > localLastUpdated) {
+        touchLastUpdated(cloudLastUpdated);
+      }
+      setCloudStatus('synced', '☁️ Nuvem Atualizada');
+      return { status: 'up_to_date' };
+    }
+
+    const localIsEmpty = AppState.categories.length === 0 && AppState.transactions.length === 0;
+    const remoteHasData = incomingCats.length > 0 || incomingTrans.length > 0;
+
+    // 2. Nuvem é mais recente OU local está vazio com nuvem preenchida
+    if (cloudLastUpdated > localLastUpdated || (localIsEmpty && remoteHasData)) {
+      console.log('[Cloud Startup Check] Versão mais recente encontrada na nuvem. Sincronizando...');
+
+      AppState.categories = incomingCats.map((c, i) => normalizeCategory(c, i));
+      AppState.transactions = incomingTrans.map((t, i) => normalizeTransaction(t, i));
+      if (Array.isArray(incomingTags)) {
+        AppState.tags = incomingTags.map(t => String(t).trim()).filter(Boolean);
+        saveTags(AppState.tags, true);
+      }
+
+      saveCategories(AppState.categories, true);
+      saveTransactions(AppState.transactions, true);
+
+      touchLastUpdated(cloudLastUpdated || Date.now());
+
+      refreshUI();
+
+      setCloudStatus('synced', '☁️ Nuvem Atualizada');
+
+      if (showNotification) {
+        showToast('☁️ Nuvem: dados atualizados com sua versão mais recente!', 'success');
+      }
+
+      return { status: 'updated_from_cloud', cloudLastUpdated };
+    }
+
+    // 3. Local é mais recente que a nuvem (alterações locais pendentes)
+    if (localLastUpdated > cloudLastUpdated) {
+      console.log('[Cloud Startup Check] Local mais recente que a nuvem. Disparando envio...');
+      setCloudStatus('syncing', '🔄 A sincronizar...');
+      triggerCloudSync();
+      return { status: 'sync_to_cloud_triggered' };
+    }
+
+    // 4. Timestamps iguais mas dados diferentes: adota versão da nuvem por segurança
+    AppState.categories = incomingCats.map((c, i) => normalizeCategory(c, i));
+    AppState.transactions = incomingTrans.map((t, i) => normalizeTransaction(t, i));
+    if (Array.isArray(incomingTags)) {
+      AppState.tags = incomingTags.map(t => String(t).trim()).filter(Boolean);
+      saveTags(AppState.tags, true);
+    }
+    saveCategories(AppState.categories, true);
+    saveTransactions(AppState.transactions, true);
+    touchLastUpdated(cloudLastUpdated || Date.now());
+    refreshUI();
+    setCloudStatus('synced', '☁️ Nuvem Atualizada');
+    return { status: 'aligned_with_cloud' };
+
+  } catch (err) {
+    console.warn('[Cloud Startup Check] Modo offline ou erro de rede:', err);
+    setCloudStatus('synced', '☁️ Nuvem Atualizada');
+    return { status: 'offline', error: err };
+  } finally {
+    isCheckingStartupCloud = false;
+  }
+}
+
+let lastFocusCheckTs = 0;
+
+/**
+ * Escuta eventos de visibilidade da página e foco para verificar atualizações
+ * quando o usuário retorna à aba (com throttle de 30 segundos).
+ */
+export function setupCloudFocusListener() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+  const handleFocusCheck = () => {
+    if (document.visibilityState === 'visible') {
+      const now = Date.now();
+      if (now - lastFocusCheckTs >= 30000) {
+        lastFocusCheckTs = now;
+        checkAndSyncCloudOnStartup({ silent: true, showNotification: true });
+      }
+    }
+  };
+
+  window.addEventListener('focus', handleFocusCheck);
+  document.addEventListener('visibilitychange', handleFocusCheck);
 }
 
 export async function executeAutoCloudSync() {

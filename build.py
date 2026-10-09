@@ -244,6 +244,13 @@ function init() {
 
   rebuildSidebar();
   navigateTo('dashboard');
+
+  if (typeof setupCloudFocusListener === 'function') {
+    setupCloudFocusListener();
+  }
+  if (typeof checkAndSyncCloudOnStartup === 'function') {
+    checkAndSyncCloudOnStartup({ silent: true, showNotification: true });
+  }
 }
 
 window.Financas = {
@@ -301,6 +308,10 @@ window.Financas = {
   executeAutoCloudSync,
   debouncedAutoCloudSync,
   triggerCloudSync,
+  areStatesEqual,
+  refreshUI,
+  checkAndSyncCloudOnStartup,
+  setupCloudFocusListener,
   handleCurrencyInput,
   parseCurrencyToFloat,
   showToast,

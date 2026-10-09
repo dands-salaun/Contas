@@ -313,7 +313,9 @@
     calculateTotalsByMonthAndYear,
     normalizeCategory,
     normalizeTransaction,
-    clearAllLocalData
+    clearAllLocalData,
+    areStatesEqual,
+    checkAndSyncCloudOnStartup
   } = Financas;
 
   // ===========================================================================
@@ -1342,8 +1344,80 @@
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // ÁREA 8: SINCRONIZAÇÃO AUTOMÁTICA NA INICIALIZAÇÃO (STARTUP SYNC)
+  // ---------------------------------------------------------------------------
+  describe('8. Verificação e Sincronização Inteligente na Inicialização (Startup Sync)', () => {
+    it('8.1 areStatesEqual: retorna true quando local e remoto possuem o mesmo conteúdo', () => {
+      const local = {
+        categories: [{ id: 'c1', name: 'Salário', type: 'Receita' }],
+        transactions: [{ id: 't1', value: 5000, monthIndex: 0, year: 2026, description: 'Salário Mensal', installment: '-', isPaid: true, tag: 'Trabalho' }],
+        tags: ['Trabalho', 'Alimentação']
+      };
+      const remote = {
+        categorias: [{ id: 'c1', name: 'Salário', type: 'Receita' }],
+        lancamentos: [{ id: 't1', value: 5000, monthIndex: 0, year: 2026, description: 'Salário Mensal', installment: '-', isPaid: true, tag: 'Trabalho' }],
+        tags: ['Trabalho', 'Alimentação']
+      };
+      expect(areStatesEqual(local, remote)).toBe(true);
+    });
+
+    it('8.2 areStatesEqual: retorna false quando houver diferença de valor, status ou tag', () => {
+      const local = {
+        categories: [{ id: 'c1', name: 'Mercado', type: 'Variável Prevista' }],
+        transactions: [{ id: 't1', value: 150, monthIndex: 5, year: 2026, description: 'Feira', installment: '-', isPaid: false, tag: '' }],
+        tags: []
+      };
+      const remote = {
+        categorias: [{ id: 'c1', name: 'Mercado', type: 'Variável Prevista' }],
+        lancamentos: [{ id: 't1', value: 180, monthIndex: 5, year: 2026, description: 'Feira', installment: '-', isPaid: true, tag: 'Alimentação' }],
+        tags: ['Alimentação']
+      };
+      expect(areStatesEqual(local, remote)).toBe(false);
+    });
+
+    it('8.3 checkAndSyncCloudOnStartup: se não configurado, retorna status disconnected', async () => {
+      localStorage.removeItem(STORAGE_KEYS.JSONBIN_KEY);
+      localStorage.removeItem(STORAGE_KEYS.JSONBIN_BIN_ID);
+      const res = await checkAndSyncCloudOnStartup();
+      expect(res.status).toBe('disconnected');
+    });
+
+    it('8.4 checkAndSyncCloudOnStartup: atualiza sessão local quando a nuvem tiver dados mais novos', async () => {
+      localStorage.setItem(STORAGE_KEYS.JSONBIN_KEY, 'key_123');
+      localStorage.setItem(STORAGE_KEYS.JSONBIN_BIN_ID, 'bin_456');
+
+      const originalFetch = global.fetch;
+      const remoteData = {
+        lastUpdated: 2000000,
+        categorias: [{ id: 'cat_cloud', name: 'Investimentos', type: 'Receita' }],
+        lancamentos: [{ id: 'lanc_cloud', categoryId: 'cat_cloud', categoryName: 'Investimentos', value: 300, monthIndex: 2, year: 2026, description: 'Dividendos', installment: '-', isPaid: true }],
+        tags: ['Renda Passiva']
+      };
+
+      global.fetch = async () => ({
+        ok: true,
+        json: async () => ({ record: remoteData })
+      });
+
+      Financas.AppState.lastUpdated = 1000000;
+      Financas.AppState.categories = [];
+      Financas.AppState.transactions = [];
+
+      const result = await checkAndSyncCloudOnStartup({ silent: true, showNotification: false });
+      expect(result.status).toBe('updated_from_cloud');
+      expect(Financas.AppState.categories.length).toBe(1);
+      expect(Financas.AppState.categories[0].name).toBe('Investimentos');
+      expect(Financas.AppState.transactions.length).toBe(1);
+      expect(Financas.AppState.transactions[0].description).toBe('Dividendos');
+      expect(Financas.AppState.lastUpdated).toBe(2000000);
+
+      global.fetch = originalFetch;
+    });
+  });
+
   // ===========================================================================
-  // 8. EXECUTOR PRINCIPAL (RUNNER) & FORMATAÇÃO VISUAL DO CONSOLE
+  // 9. EXECUTOR PRINCIPAL (RUNNER) & FORMATAÇÃO VISUAL DO CONSOLE
   // ===========================================================================
 
   async function runTests() {
