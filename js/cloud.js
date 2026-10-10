@@ -9,7 +9,7 @@ import { STORAGE_KEYS } from './constants.js';
 import { DOM } from './dom.js';
 import { AppState } from './state.js';
 import { setCloudStatus, showToast, debounce } from './utils.js';
-import { touchLastUpdated, saveCategories, saveTransactions, saveTags, updateLastUpdatedUI, setCloudSyncHook } from './storage.js';
+import { touchLastUpdated, saveCategories, saveTransactions, saveTags, updateLastUpdatedUI, setCloudSyncHook, formatTimestamp } from './storage.js';
 import { normalizeCategory, normalizeTransaction } from './normalization.js';
 
 export function getStoredString(key) {
@@ -54,6 +54,8 @@ export function loadCloudCredentials() {
 
   if (apiKey && binId) {
     setCloudStatus('syncing', '☁️ Conectando...');
+  } else if (apiKey && !binId) {
+    setCloudStatus('pending', '🔑 Chave Salva (Envie para a Nuvem)');
   } else {
     setCloudStatus('disconnected', '☁️ Nuvem Desconectada');
   }
@@ -83,6 +85,9 @@ export function saveCloudCredentials() {
       showToast('Credenciais da nuvem guardadas com sucesso!', 'success');
     }
     checkAndSyncCloudOnStartup({ showNotification: true, force: true });
+  } else if (apiKey && !binId) {
+    setCloudStatus('pending', '🔑 Chave Salva (Envie para a Nuvem)');
+    showToast('Chave da API salva com sucesso! Como você ainda não tem um Bin ID, clique em "Enviar para a Nuvem" para criar seu cofre virtual.', 'info');
   } else {
     setCloudStatus('disconnected', '☁️ Nuvem Desconectada');
     showToast('Credenciais da nuvem guardadas com sucesso!', 'success');
@@ -504,6 +509,21 @@ export async function checkAndSyncCloudOnStartup({ silent = true, showNotificati
 
     // 2. Nuvem é mais recente OU local está vazio com nuvem preenchida
     if (cloudLastUpdated > localLastUpdated || (localIsEmpty && remoteHasData)) {
+      if (!localIsEmpty) {
+        const cloudDateStr = formatTimestamp(cloudLastUpdated);
+        const confirmRestore = (typeof window !== 'undefined' && typeof window.confirm === 'function')
+          ? window.confirm(
+              `Existe uma versão mais recente na nuvem (atualizada em ${cloudDateStr}).\n\nDeseja carregar a versão da nuvem agora?\n\n[OK] = Carregar da nuvem\n[Cancelar] = Manter dados deste aparelho`
+            )
+          : true;
+
+        if (!confirmRestore) {
+          console.log('[Cloud Startup Check] Usuário optou por manter os dados locais.');
+          setCloudStatus('synced', '☁️ Nuvem Atualizada');
+          return { status: 'user_kept_local' };
+        }
+      }
+
       console.log('[Cloud Startup Check] Versão mais recente encontrada na nuvem. Sincronizando...');
 
       AppState.categories = incomingCats.map((c, i) => normalizeCategory(c, i));
@@ -537,7 +557,21 @@ export async function checkAndSyncCloudOnStartup({ silent = true, showNotificati
       return { status: 'sync_to_cloud_triggered' };
     }
 
-    // 4. Timestamps iguais mas dados diferentes: adota versão da nuvem por segurança
+    // 4. Timestamps iguais mas dados diferentes: solicita confirmação antes de adotar nuvem
+    if (!localIsEmpty) {
+      const confirmRestore = (typeof window !== 'undefined' && typeof window.confirm === 'function')
+        ? window.confirm(
+            'Detectamos dados diferentes na nuvem com a mesma data/hora.\n\nDeseja carregar a versão da nuvem?\n\n[OK] = Carregar da nuvem\n[Cancelar] = Manter dados deste aparelho'
+          )
+        : true;
+
+      if (!confirmRestore) {
+        console.log('[Cloud Startup Check] Usuário optou por manter os dados locais.');
+        setCloudStatus('synced', '☁️ Nuvem Atualizada');
+        return { status: 'user_kept_local' };
+      }
+    }
+
     AppState.categories = incomingCats.map((c, i) => normalizeCategory(c, i));
     AppState.transactions = incomingTrans.map((t, i) => normalizeTransaction(t, i));
     if (Array.isArray(incomingTags)) {
@@ -564,7 +598,8 @@ let lastFocusCheckTs = 0;
 
 /**
  * Escuta eventos de visibilidade da página e foco para verificar atualizações
- * quando o usuário retorna à aba (com throttle de 30 segundos).
+ * quando o usuário retorna à aba (com throttle de 30 segundos), e garante
+ * envio imediato de alterações pendentes ao sair ou trocar de aba.
  */
 export function setupCloudFocusListener() {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
@@ -576,11 +611,23 @@ export function setupCloudFocusListener() {
         lastFocusCheckTs = now;
         checkAndSyncCloudOnStartup({ silent: true, showNotification: true });
       }
+    } else if (document.visibilityState === 'hidden') {
+      // Ao trocar de aba ou minimizar, envia imediatamente se houver sincronização pendente
+      if (typeof debouncedAutoCloudSync?.flush === 'function') {
+        debouncedAutoCloudSync.flush();
+      }
+    }
+  };
+
+  const handlePageHide = () => {
+    if (typeof debouncedAutoCloudSync?.flush === 'function') {
+      debouncedAutoCloudSync.flush();
     }
   };
 
   window.addEventListener('focus', handleFocusCheck);
   document.addEventListener('visibilitychange', handleFocusCheck);
+  window.addEventListener('pagehide', handlePageHide);
 }
 
 export async function executeAutoCloudSync() {

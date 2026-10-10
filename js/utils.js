@@ -132,13 +132,32 @@ export function parseCurrencyToFloat(valorFormatado) {
  */
 export function debounce(fn, delay = 3000) {
   let timer = null;
-  return function(...args) {
+  let lastArgs = null;
+  let lastThis = null;
+
+  const debounced = function(...args) {
+    lastArgs = args;
+    lastThis = this;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
-      fn.apply(this, args);
+      fn.apply(lastThis, lastArgs);
     }, delay);
   };
+
+  debounced.flush = function() {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+      return fn.apply(lastThis, lastArgs);
+    }
+  };
+
+  debounced.pending = function() {
+    return Boolean(timer);
+  };
+
+  return debounced;
 }
 
 /**
@@ -147,7 +166,7 @@ export function debounce(fn, delay = 3000) {
 export function setCloudStatus(state, customText) {
   if (!DOM.cloudStatus) return;
 
-  DOM.cloudStatus.classList.remove('syncing', 'synced', 'error', 'disconnected');
+  DOM.cloudStatus.classList.remove('syncing', 'synced', 'error', 'disconnected', 'pending');
 
   if (state === 'syncing') {
     DOM.cloudStatus.classList.add('syncing');
@@ -161,6 +180,12 @@ export function setCloudStatus(state, customText) {
     DOM.cloudStatus.style.color = '#10b981';
     DOM.cloudStatus.style.borderColor = 'rgba(16, 185, 129, 0.35)';
     DOM.cloudStatus.style.backgroundColor = 'rgba(16, 185, 129, 0.12)';
+  } else if (state === 'pending') {
+    DOM.cloudStatus.classList.add('pending');
+    DOM.cloudStatus.textContent = customText || '🔑 Chave Salva';
+    DOM.cloudStatus.style.color = '#3b82f6';
+    DOM.cloudStatus.style.borderColor = 'rgba(59, 130, 246, 0.4)';
+    DOM.cloudStatus.style.backgroundColor = 'rgba(59, 130, 246, 0.12)';
   } else if (state === 'error') {
     DOM.cloudStatus.classList.add('error');
     DOM.cloudStatus.textContent = customText || '⚠️ Erro na Nuvem';
@@ -169,7 +194,7 @@ export function setCloudStatus(state, customText) {
     DOM.cloudStatus.style.backgroundColor = 'rgba(239, 68, 68, 0.12)';
   } else {
     DOM.cloudStatus.classList.add('disconnected');
-    DOM.cloudStatus.textContent = customText || '☁️ Nuvem Atualizada';
+    DOM.cloudStatus.textContent = customText || '☁️ Nuvem Desconectada';
     DOM.cloudStatus.style.color = '';
     DOM.cloudStatus.style.borderColor = '';
     DOM.cloudStatus.style.backgroundColor = '';

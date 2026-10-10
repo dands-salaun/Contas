@@ -443,7 +443,18 @@ export function deleteTransaction(id) {
     isParcelada(transaction.installment)
   );
 
-  if (!window.confirm(`Deseja realmente excluir o lançamento "${transaction.description}"?`)) {
+  let confirmMsg = `Deseja realmente excluir o lançamento "${transaction.description}"?`;
+
+  const linkedMirror = transaction.linkedId
+    ? AppState.transactions.find(o => o.linkedId === transaction.linkedId && o.id !== transaction.id)
+    : null;
+
+  if (linkedMirror) {
+    const mirrorCatName = linkedMirror.categoryName || 'outra categoria';
+    confirmMsg += `\n\nATENÇÃO: Este lançamento possui um vínculo com a categoria "${mirrorCatName}". Ao confirmar, o lançamento correspondente lá também será excluído.`;
+  }
+
+  if (!window.confirm(confirmMsg)) {
     return;
   }
 

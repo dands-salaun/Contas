@@ -719,7 +719,12 @@ export function calculateTotalsByMonthAndYear(transactions = [], categories = []
     transactions.forEach(t => {
       if (Number(t.monthIndex) === targetMonth && Number(t.year) === targetYear) {
         const catNameKey = (t.categoryName || '').trim().toLowerCase();
-        const hasValidCategory = (t.categoryId && validCategoryIds.has(t.categoryId)) || validCategoryNames.has(catNameKey);
+        const normTxType = t.categoryType ? normalizeCategoryType(t.categoryType) : null;
+        const compKey = normTxType ? `${catNameKey}__${normTxType.toLowerCase()}` : '';
+
+        const hasValidCategory = t.categoryId
+          ? validCategoryIds.has(t.categoryId)
+          : (compKey ? categoryCompositeTypeMap.has(compKey) : validCategoryNames.has(catNameKey));
 
         // Se uma lista de categorias foi fornecida, ignora lançamentos órfãos de categorias inexistentes
         if (hasCategoriesFilter && !hasValidCategory) {
@@ -727,8 +732,6 @@ export function calculateTotalsByMonthAndYear(transactions = [], categories = []
         }
 
         totalLancamentos++;
-        const normTxType = t.categoryType ? normalizeCategoryType(t.categoryType) : null;
-        const compKey = normTxType ? `${catNameKey}__${normTxType.toLowerCase()}` : '';
         const type = normTxType 
           || (t.categoryId ? categoryIdTypeMap.get(t.categoryId) : null)
           || (compKey ? categoryCompositeTypeMap.get(compKey) : null)

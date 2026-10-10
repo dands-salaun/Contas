@@ -29,6 +29,7 @@ export const CHART_PALETTE = [
 
 let currentPeriodMode = 'month'; // 'month' | 'year'
 let currentGroupMode = 'category'; // 'category' | 'type' | 'tag'
+let currentChartMonthIndex = null;
 
 /**
  * Calcula dados agregados de despesas para renderização gráfica
@@ -117,8 +118,15 @@ export function calculateExpensesChartData(transactions, categories, {
       label = normType;
     } else if (groupMode === 'tag') {
       const rawTag = (t.tag && typeof t.tag === 'string') ? t.tag.trim() : '';
-      key = rawTag || 'Sem Classificação';
-      label = rawTag || 'Sem Classificação';
+      if (rawTag) {
+        key = rawTag;
+        label = rawTag;
+      } else {
+        const rawType = cat ? cat.type : t.categoryType;
+        const normType = rawType ? normalizeCategoryType(rawType) : 'Conta Fixa';
+        key = normType;
+        label = normType;
+      }
     }
 
     if (!groups.has(key)) {
@@ -349,7 +357,7 @@ export function renderAnnualEvolutionHTML(evolutionData) {
 export function renderChartsModal() {
   if (!DOM.modalChartsOverlay) return;
 
-  const currentMonth = Number(AppState.selectedMonthIndex);
+  const currentMonth = currentChartMonthIndex !== null ? Number(currentChartMonthIndex) : Number(AppState.selectedMonthIndex);
   const currentYear = Number(AppState.selectedYear);
   const monthName = MONTH_NAMES[currentMonth];
 
@@ -507,6 +515,7 @@ function attachChartHoverListeners(totalExpenses) {
  */
 export function openChartsModal() {
   if (!DOM.modalChartsOverlay) return;
+  currentChartMonthIndex = AppState.selectedMonthIndex;
   document.body.style.overflow = 'hidden';
   DOM.modalChartsOverlay.style.display = 'flex';
   requestAnimationFrame(() => {
@@ -538,43 +547,14 @@ export function setChartPeriodMode(mode) {
 
 /**
  * Trata a mudança de mês via dropdown no modal
- * Sincroniza o estado global e o Dashboard em segundo plano
+ * Mantém a navegação restrita ao modal de gráficos sem alterar o Dashboard
  */
 export function onChartMonthChange(newMonthIndex) {
   const m = Number(newMonthIndex);
   if (isNaN(m) || m < 0 || m > 11) return;
 
   currentPeriodMode = 'month';
-  AppState.selectedMonthIndex = m;
-
-  // Sincroniza abas horizontais do mês no Dashboard e na tela de Lançamentos
-  if (DOM.monthTabsBar) {
-    DOM.monthTabsBar.querySelectorAll('.month-tab').forEach(tab => {
-      tab.classList.toggle('active', parseInt(tab.getAttribute('data-month'), 10) === m);
-    });
-  }
-  if (DOM.dashMonthTabsBar) {
-    DOM.dashMonthTabsBar.querySelectorAll('.month-tab').forEach(tab => {
-      tab.classList.toggle('active', parseInt(tab.getAttribute('data-month'), 10) === m);
-    });
-  }
-
-  // Se houver edição em andamento, cancela para não salvar no mês incorreto
-  if (AppState.editingTransactionId) {
-    if (typeof window !== 'undefined' && typeof window.Financas?.cancelEditingTransaction === 'function') {
-      window.Financas.cancelEditingTransaction();
-    }
-  }
-
-  // Atualiza os dados do Dashboard em segundo plano
-  if (typeof window !== 'undefined' && window.Financas && typeof window.Financas.renderDashboard === 'function') {
-    window.Financas.renderDashboard();
-  }
-
-  // Se o usuário estiver na tela de categoria, atualiza também a tabela de lançamentos
-  if (AppState.currentRoute === 'category' && typeof window !== 'undefined' && window.Financas && typeof window.Financas.renderTransactionsTable === 'function') {
-    window.Financas.renderTransactionsTable();
-  }
+  currentChartMonthIndex = m;
 
   // Re-renderiza o gráfico com o novo mês selecionado
   renderChartsModal();

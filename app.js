@@ -613,13 +613,32 @@ function parseCurrencyToFloat(valorFormatado) {
  */
 function debounce(fn, delay = 3000) {
   let timer = null;
-  return function(...args) {
+  let lastArgs = null;
+  let lastThis = null;
+
+  const debounced = function(...args) {
+    lastArgs = args;
+    lastThis = this;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
-      fn.apply(this, args);
+      fn.apply(lastThis, lastArgs);
     }, delay);
   };
+
+  debounced.flush = function() {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+      return fn.apply(lastThis, lastArgs);
+    }
+  };
+
+  debounced.pending = function() {
+    return Boolean(timer);
+  };
+
+  return debounced;
 }
 
 /**
@@ -628,7 +647,7 @@ function debounce(fn, delay = 3000) {
 function setCloudStatus(state, customText) {
   if (!DOM.cloudStatus) return;
 
-  DOM.cloudStatus.classList.remove('syncing', 'synced', 'error', 'disconnected');
+  DOM.cloudStatus.classList.remove('syncing', 'synced', 'error', 'disconnected', 'pending');
 
   if (state === 'syncing') {
     DOM.cloudStatus.classList.add('syncing');
@@ -642,6 +661,12 @@ function setCloudStatus(state, customText) {
     DOM.cloudStatus.style.color = '#10b981';
     DOM.cloudStatus.style.borderColor = 'rgba(16, 185, 129, 0.35)';
     DOM.cloudStatus.style.backgroundColor = 'rgba(16, 185, 129, 0.12)';
+  } else if (state === 'pending') {
+    DOM.cloudStatus.classList.add('pending');
+    DOM.cloudStatus.textContent = customText || '🔑 Chave Salva';
+    DOM.cloudStatus.style.color = '#3b82f6';
+    DOM.cloudStatus.style.borderColor = 'rgba(59, 130, 246, 0.4)';
+    DOM.cloudStatus.style.backgroundColor = 'rgba(59, 130, 246, 0.12)';
   } else if (state === 'error') {
     DOM.cloudStatus.classList.add('error');
     DOM.cloudStatus.textContent = customText || '⚠️ Erro na Nuvem';
@@ -650,7 +675,7 @@ function setCloudStatus(state, customText) {
     DOM.cloudStatus.style.backgroundColor = 'rgba(239, 68, 68, 0.12)';
   } else {
     DOM.cloudStatus.classList.add('disconnected');
-    DOM.cloudStatus.textContent = customText || '☁️ Nuvem Atualizada';
+    DOM.cloudStatus.textContent = customText || '☁️ Nuvem Desconectada';
     DOM.cloudStatus.style.color = '';
     DOM.cloudStatus.style.borderColor = '';
     DOM.cloudStatus.style.backgroundColor = '';
@@ -1379,7 +1404,12 @@ function calculateTotalsByMonthAndYear(transactions = [], categories = [], month
     transactions.forEach(t => {
       if (Number(t.monthIndex) === targetMonth && Number(t.year) === targetYear) {
         const catNameKey = (t.categoryName || '').trim().toLowerCase();
-        const hasValidCategory = (t.categoryId && validCategoryIds.has(t.categoryId)) || validCategoryNames.has(catNameKey);
+        const normTxType = t.categoryType ? normalizeCategoryType(t.categoryType) : null;
+        const compKey = normTxType ? `${catNameKey}__${normTxType.toLowerCase()}` : '';
+
+        const hasValidCategory = t.categoryId
+          ? validCategoryIds.has(t.categoryId)
+          : (compKey ? categoryCompositeTypeMap.has(compKey) : validCategoryNames.has(catNameKey));
 
         // Se uma lista de categorias foi fornecida, ignora lançamentos órfãos de categorias inexistentes
         if (hasCategoriesFilter && !hasValidCategory) {
@@ -1387,8 +1417,6 @@ function calculateTotalsByMonthAndYear(transactions = [], categories = [], month
         }
 
         totalLancamentos++;
-        const normTxType = t.categoryType ? normalizeCategoryType(t.categoryType) : null;
-        const compKey = normTxType ? `${catNameKey}__${normTxType.toLowerCase()}` : '';
         const type = normTxType 
           || (t.categoryId ? categoryIdTypeMap.get(t.categoryId) : null)
           || (compKey ? categoryCompositeTypeMap.get(compKey) : null)
@@ -1479,6 +1507,8 @@ function loadCloudCredentials() {
 
   if (apiKey && binId) {
     setCloudStatus('syncing', '☁️ Conectando...');
+  } else if (apiKey && !binId) {
+    setCloudStatus('pending', '🔑 Chave Salva (Envie para a Nuvem)');
   } else {
     setCloudStatus('disconnected', '☁️ Nuvem Desconectada');
   }
@@ -1508,6 +1538,9 @@ function saveCloudCredentials() {
       showToast('Credenciais da nuvem guardadas com sucesso!', 'success');
     }
     checkAndSyncCloudOnStartup({ showNotification: true, force: true });
+  } else if (apiKey && !binId) {
+    setCloudStatus('pending', '🔑 Chave Salva (Envie para a Nuvem)');
+    showToast('Chave da API salva com sucesso! Como você ainda não tem um Bin ID, clique em "Enviar para a Nuvem" para criar seu cofre virtual.', 'info');
   } else {
     setCloudStatus('disconnected', '☁️ Nuvem Desconectada');
     showToast('Credenciais da nuvem guardadas com sucesso!', 'success');
@@ -1929,6 +1962,21 @@ async function checkAndSyncCloudOnStartup({ silent = true, showNotification = tr
 
     // 2. Nuvem é mais recente OU local está vazio com nuvem preenchida
     if (cloudLastUpdated > localLastUpdated || (localIsEmpty && remoteHasData)) {
+      if (!localIsEmpty) {
+        const cloudDateStr = formatTimestamp(cloudLastUpdated);
+        const confirmRestore = (typeof window !== 'undefined' && typeof window.confirm === 'function')
+          ? window.confirm(
+              `Existe uma versão mais recente na nuvem (atualizada em ${cloudDateStr}).\n\nDeseja carregar a versão da nuvem agora?\n\n[OK] = Carregar da nuvem\n[Cancelar] = Manter dados deste aparelho`
+            )
+          : true;
+
+        if (!confirmRestore) {
+          console.log('[Cloud Startup Check] Usuário optou por manter os dados locais.');
+          setCloudStatus('synced', '☁️ Nuvem Atualizada');
+          return { status: 'user_kept_local' };
+        }
+      }
+
       console.log('[Cloud Startup Check] Versão mais recente encontrada na nuvem. Sincronizando...');
 
       AppState.categories = incomingCats.map((c, i) => normalizeCategory(c, i));
@@ -1962,7 +2010,21 @@ async function checkAndSyncCloudOnStartup({ silent = true, showNotification = tr
       return { status: 'sync_to_cloud_triggered' };
     }
 
-    // 4. Timestamps iguais mas dados diferentes: adota versão da nuvem por segurança
+    // 4. Timestamps iguais mas dados diferentes: solicita confirmação antes de adotar nuvem
+    if (!localIsEmpty) {
+      const confirmRestore = (typeof window !== 'undefined' && typeof window.confirm === 'function')
+        ? window.confirm(
+            'Detectamos dados diferentes na nuvem com a mesma data/hora.\n\nDeseja carregar a versão da nuvem?\n\n[OK] = Carregar da nuvem\n[Cancelar] = Manter dados deste aparelho'
+          )
+        : true;
+
+      if (!confirmRestore) {
+        console.log('[Cloud Startup Check] Usuário optou por manter os dados locais.');
+        setCloudStatus('synced', '☁️ Nuvem Atualizada');
+        return { status: 'user_kept_local' };
+      }
+    }
+
     AppState.categories = incomingCats.map((c, i) => normalizeCategory(c, i));
     AppState.transactions = incomingTrans.map((t, i) => normalizeTransaction(t, i));
     if (Array.isArray(incomingTags)) {
@@ -1989,7 +2051,8 @@ let lastFocusCheckTs = 0;
 
 /**
  * Escuta eventos de visibilidade da página e foco para verificar atualizações
- * quando o usuário retorna à aba (com throttle de 30 segundos).
+ * quando o usuário retorna à aba (com throttle de 30 segundos), e garante
+ * envio imediato de alterações pendentes ao sair ou trocar de aba.
  */
 function setupCloudFocusListener() {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
@@ -2001,11 +2064,23 @@ function setupCloudFocusListener() {
         lastFocusCheckTs = now;
         checkAndSyncCloudOnStartup({ silent: true, showNotification: true });
       }
+    } else if (document.visibilityState === 'hidden') {
+      // Ao trocar de aba ou minimizar, envia imediatamente se houver sincronização pendente
+      if (typeof debouncedAutoCloudSync?.flush === 'function') {
+        debouncedAutoCloudSync.flush();
+      }
+    }
+  };
+
+  const handlePageHide = () => {
+    if (typeof debouncedAutoCloudSync?.flush === 'function') {
+      debouncedAutoCloudSync.flush();
     }
   };
 
   window.addEventListener('focus', handleFocusCheck);
   document.addEventListener('visibilitychange', handleFocusCheck);
+  window.addEventListener('pagehide', handlePageHide);
 }
 
 async function executeAutoCloudSync() {
@@ -2789,6 +2864,7 @@ const CHART_PALETTE = [
 
 let currentPeriodMode = 'month'; // 'month' | 'year'
 let currentGroupMode = 'category'; // 'category' | 'type' | 'tag'
+let currentChartMonthIndex = null;
 
 /**
  * Calcula dados agregados de despesas para renderização gráfica
@@ -2877,8 +2953,15 @@ function calculateExpensesChartData(transactions, categories, {
       label = normType;
     } else if (groupMode === 'tag') {
       const rawTag = (t.tag && typeof t.tag === 'string') ? t.tag.trim() : '';
-      key = rawTag || 'Sem Classificação';
-      label = rawTag || 'Sem Classificação';
+      if (rawTag) {
+        key = rawTag;
+        label = rawTag;
+      } else {
+        const rawType = cat ? cat.type : t.categoryType;
+        const normType = rawType ? normalizeCategoryType(rawType) : 'Conta Fixa';
+        key = normType;
+        label = normType;
+      }
     }
 
     if (!groups.has(key)) {
@@ -3109,7 +3192,7 @@ function renderAnnualEvolutionHTML(evolutionData) {
 function renderChartsModal() {
   if (!DOM.modalChartsOverlay) return;
 
-  const currentMonth = Number(AppState.selectedMonthIndex);
+  const currentMonth = currentChartMonthIndex !== null ? Number(currentChartMonthIndex) : Number(AppState.selectedMonthIndex);
   const currentYear = Number(AppState.selectedYear);
   const monthName = MONTH_NAMES[currentMonth];
 
@@ -3267,6 +3350,7 @@ function attachChartHoverListeners(totalExpenses) {
  */
 function openChartsModal() {
   if (!DOM.modalChartsOverlay) return;
+  currentChartMonthIndex = AppState.selectedMonthIndex;
   document.body.style.overflow = 'hidden';
   DOM.modalChartsOverlay.style.display = 'flex';
   requestAnimationFrame(() => {
@@ -3298,43 +3382,14 @@ function setChartPeriodMode(mode) {
 
 /**
  * Trata a mudança de mês via dropdown no modal
- * Sincroniza o estado global e o Dashboard em segundo plano
+ * Mantém a navegação restrita ao modal de gráficos sem alterar o Dashboard
  */
 function onChartMonthChange(newMonthIndex) {
   const m = Number(newMonthIndex);
   if (isNaN(m) || m < 0 || m > 11) return;
 
   currentPeriodMode = 'month';
-  AppState.selectedMonthIndex = m;
-
-  // Sincroniza abas horizontais do mês no Dashboard e na tela de Lançamentos
-  if (DOM.monthTabsBar) {
-    DOM.monthTabsBar.querySelectorAll('.month-tab').forEach(tab => {
-      tab.classList.toggle('active', parseInt(tab.getAttribute('data-month'), 10) === m);
-    });
-  }
-  if (DOM.dashMonthTabsBar) {
-    DOM.dashMonthTabsBar.querySelectorAll('.month-tab').forEach(tab => {
-      tab.classList.toggle('active', parseInt(tab.getAttribute('data-month'), 10) === m);
-    });
-  }
-
-  // Se houver edição em andamento, cancela para não salvar no mês incorreto
-  if (AppState.editingTransactionId) {
-    if (typeof window !== 'undefined' && typeof window.Financas?.cancelEditingTransaction === 'function') {
-      window.Financas.cancelEditingTransaction();
-    }
-  }
-
-  // Atualiza os dados do Dashboard em segundo plano
-  if (typeof window !== 'undefined' && window.Financas && typeof window.Financas.renderDashboard === 'function') {
-    window.Financas.renderDashboard();
-  }
-
-  // Se o usuário estiver na tela de categoria, atualiza também a tabela de lançamentos
-  if (AppState.currentRoute === 'category' && typeof window !== 'undefined' && window.Financas && typeof window.Financas.renderTransactionsTable === 'function') {
-    window.Financas.renderTransactionsTable();
-  }
+  currentChartMonthIndex = m;
 
   // Re-renderiza o gráfico com o novo mês selecionado
   renderChartsModal();
@@ -4294,7 +4349,18 @@ function deleteTransaction(id) {
     isParcelada(transaction.installment)
   );
 
-  if (!window.confirm(`Deseja realmente excluir o lançamento "${transaction.description}"?`)) {
+  let confirmMsg = `Deseja realmente excluir o lançamento "${transaction.description}"?`;
+
+  const linkedMirror = transaction.linkedId
+    ? AppState.transactions.find(o => o.linkedId === transaction.linkedId && o.id !== transaction.id)
+    : null;
+
+  if (linkedMirror) {
+    const mirrorCatName = linkedMirror.categoryName || 'outra categoria';
+    confirmMsg += `\n\nATENÇÃO: Este lançamento possui um vínculo com a categoria "${mirrorCatName}". Ao confirmar, o lançamento correspondente lá também será excluído.`;
+  }
+
+  if (!window.confirm(confirmMsg)) {
     return;
   }
 

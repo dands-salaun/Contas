@@ -2506,6 +2506,101 @@
       Financas.cancelEditingCategory();
       expect(Financas.AppState.editingCategoryId).toBe(null);
     });
+
+    it('9.27 calculateExpensesChartData no modo Por Tag utiliza o tipo da conta como fallback quando não houver tag', () => {
+      const cats = [
+        { id: 'c1', name: 'Aluguel', type: 'Conta Fixa' },
+        { id: 'c2', name: 'Nubank', type: 'Cartão de Crédito' }
+      ];
+
+      const trans = [
+        { id: 't1', categoryId: 'c1', categoryName: 'Aluguel', categoryType: 'Conta Fixa', value: 2000, tag: '', monthIndex: 10, year: 2026 },
+        { id: 't2', categoryId: 'c2', categoryName: 'Nubank', categoryType: 'Cartão de Crédito', value: 300, tag: 'Pets', monthIndex: 10, year: 2026 },
+        { id: 't3', categoryId: 'c2', categoryName: 'Nubank', categoryType: 'Cartão de Crédito', value: 500, tag: 'Casa', monthIndex: 10, year: 2026 }
+      ];
+
+      const data = Financas.calculateExpensesChartData(trans, cats, {
+        periodMode: 'month',
+        groupMode: 'tag',
+        monthIndex: 10,
+        year: 2026
+      });
+
+      expect(data.totalExpenses).toBe(2800);
+      expect(data.items).toHaveLength(3);
+
+      // Aluguel (sem tag) deve ser agrupado como 'Conta Fixa' em vez de 'Sem Classificação'
+      const itemFixa = data.items.find(i => i.label === 'Conta Fixa');
+      expect(itemFixa).toBeTruthy();
+      expect(itemFixa.total).toBe(2000);
+
+      // Itens com tag mantêm suas respectivas tags
+      const itemPets = data.items.find(i => i.label === 'Pets');
+      expect(itemPets).toBeTruthy();
+      expect(itemPets.total).toBe(300);
+
+      const itemCasa = data.items.find(i => i.label === 'Casa');
+      expect(itemCasa).toBeTruthy();
+      expect(itemCasa.total).toBe(500);
+    });
+
+    it('9.28 calculateTotalsByMonthAndYear prioriza categoryId e evita colisão de categorias com mesmo nome em tipos diferentes', () => {
+      const catsFiltered = [
+        { id: 'cat_rec_dandara', name: 'Dandara', type: 'Receita' }
+      ];
+
+      const trans = [
+        { id: 't1', categoryId: 'cat_rec_dandara', categoryName: 'Dandara', categoryType: 'Receita', value: 3000, monthIndex: 10, year: 2026, isRevenue: true },
+        { id: 't2', categoryId: 'cat_rep_dandara', categoryName: 'Dandara', categoryType: 'Repasse', value: 500, monthIndex: 10, year: 2026, isRevenue: true }
+      ];
+
+      const totals = Financas.calculateTotalsByMonthAndYear(trans, catsFiltered, 10, 2026);
+      expect(totals.totalLancamentos).toBe(1);
+      expect(totals.totalReceitas).toBe(3000);
+      expect(totals.saldoPrevisto).toBe(3000);
+    });
+
+    it('9.29 onChartMonthChange não altera AppState.selectedMonthIndex do Dashboard', () => {
+      Financas.AppState.selectedMonthIndex = 5; // Junho
+      Financas.onChartMonthChange(8); // Setembro no gráfico
+
+      expect(Financas.AppState.selectedMonthIndex).toBe(5);
+    });
+
+    it('9.30 deleteTransaction com linkedId exibe aviso sobre a ponta vinculada no confirm', () => {
+      let confirmMessage = '';
+      const originalConfirm = window.confirm;
+      window.confirm = (msg) => {
+        confirmMessage = msg;
+        return false; // Cancela exclusão
+      };
+
+      Financas.AppState.transactions = [
+        { id: 't_card', linkedId: 'link_1', categoryId: 'c1', categoryName: 'Nubank', description: 'Restaurante', value: 100 },
+        { id: 't_rep', linkedId: 'link_1', categoryId: 'c2', categoryName: 'Francisca', description: 'Restaurante ( Nubank )', value: 100 }
+      ];
+
+      Financas.deleteTransaction('t_card');
+
+      expect(confirmMessage).toContain('ATENÇÃO: Este lançamento possui um vínculo com a categoria "Francisca"');
+      window.confirm = originalConfirm;
+    });
+
+    it('9.31 debounce flush dispara sincronização pendente imediatamente', () => {
+      let executed = 0;
+      const fn = () => { executed++; };
+      const debounced = Financas.debounce ? Financas.debounce(fn, 5000) : null;
+
+      if (debounced) {
+        debounced();
+        expect(executed).toBe(0);
+        expect(debounced.pending()).toBe(true);
+
+        debounced.flush();
+        expect(executed).toBe(1);
+        expect(debounced.pending()).toBe(false);
+      }
+    });
   });
 
   // ===========================================================================
