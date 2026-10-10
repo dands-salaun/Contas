@@ -67,12 +67,18 @@
       <!-- Cabeçalho Simples no Topo -->
       <header class="app-header">
         <div class="header-left">
-          <button id="btnMenuToggle" class="menu-mobile" aria-label="Abrir menu">☰</button>
+          <button id="btnMenuToggle" class="menu-mobile" aria-label="Abrir menu" title="Abrir menu">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
           <h1 class="header-title" id="headerTitle">Dashboard</h1>
         </div>
         <div class="header-right">
           <!-- Indicador de Status da Nuvem -->
-          <span id="cloudStatus" class="status-indicator">☁️ Nuvem Atualizada</span>
+          <span id="cloudStatus" class="status-indicator" title="Nuvem Atualizada" aria-label="Nuvem Atualizada"><span class="status-icon">☁️</span> <span class="status-text">Nuvem Atualizada</span></span>
 
           <!-- Seletor de Ano -->
           <div class="year-selector" id="yearSelector">
@@ -129,7 +135,7 @@
                 <p class="sheet-section-subtitle" id="dashCategoryCount">Visão consolidada em formato de planilha</p>
               </div>
               <div class="sheet-header-actions">
-                <button type="button" id="btnOpenChartsModal" class="btn btn-secondary" style="padding: 8px 16px; height: 38px; font-size: 0.85rem; white-space: nowrap;">
+                <button type="button" id="btnOpenChartsModal" class="btn btn-secondary btn-sm">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="18" y1="20" x2="18" y2="10"></line>
                     <line x1="12" y1="20" x2="12" y2="4"></line>
@@ -137,13 +143,13 @@
                   </svg>
                   <span>Gráficos</span>
                 </button>
-                <button type="button" id="btnAbrirFiltros" class="btn btn-secondary btn-secundario" style="padding: 8px 16px; height: 38px; font-size: 0.85rem; white-space: nowrap;">
+                <button type="button" id="btnAbrirFiltros" class="btn btn-secondary btn-sm">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
                   </svg>
                   <span>Filtros</span>
                 </button>
-                <button class="btn btn-primary" id="btnGoToConfig" style="padding: 8px 14px; height: 38px; font-size: 0.82rem; white-space: nowrap;">
+                <button type="button" class="btn btn-primary btn-sm" id="btnGoToConfig">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M12 5v14M5 12h14"/>
                   </svg>
@@ -308,8 +314,8 @@
                 <h3 class="card-title">Sincronização na Nuvem (JSONBin)</h3>
                 <p class="card-subtitle">Faça backup e sincronize os seus dados financeiros utilizando a API REST do JSONBin.io</p>
               </div>
-              <div class="storage-badge-status" id="cloudStatusBadge" style="background-color: rgba(99, 102, 241, 0.1); border-color: rgba(99, 102, 241, 0.3); color: var(--primary);">
-                <span class="status-dot" style="background: var(--primary);"></span>
+              <div class="storage-badge-status badge-cloud-api" id="cloudStatusBadge">
+                <span class="status-dot"></span>
                 <span>API REST</span>
               </div>
             </div>
@@ -325,7 +331,7 @@
                     placeholder="Cole aqui a sua X-Master-Key do JSONBin..." 
                     autocomplete="off"
                   />
-                  <p class="backup-hint" style="margin-top: 4px;">Chave mestre obtida na sua conta JSONBin.io.</p>
+                  <p class="backup-hint">Chave mestre obtida na sua conta JSONBin.io.</p>
                 </div>
                 <div class="form-group flex-2">
                   <label for="jsonbinBinId">Bin ID (Opcional na primeira vez)</label>
@@ -336,12 +342,12 @@
                     placeholder="Gerado automaticamente ou cole um Bin ID existente..." 
                     autocomplete="off"
                   />
-                  <p class="backup-hint" style="margin-top: 4px;">Identificador do Bin. Deixe vazio para criar um novo no primeiro envio.</p>
+                  <p class="backup-hint">Identificador do Bin. Deixe vazio para criar um novo no primeiro envio.</p>
                 </div>
               </div>
 
               <div class="cloud-sync-info">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity: 0.7; flex-shrink: 0;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <circle cx="12" cy="12" r="10"></circle>
                   <polyline points="12 6 12 12 16 14"></polyline>
                 </svg>
@@ -559,11 +565,11 @@
               <table class="data-table" id="transactionTable">
                 <thead>
                   <tr>
-                    <th style="width: 80px; text-align: center;">Status</th>
-                    <th style="width: 110px;">Parcela</th>
+                    <th class="col-status">Status</th>
+                    <th class="col-installment">Parcela</th>
                     <th>Descrição</th>
-                    <th style="width: 150px;">Valor</th>
-                    <th class="text-right" style="width: 160px;">Ações</th>
+                    <th class="col-value">Valor</th>
+                    <th class="col-actions text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody id="transactionTableBody">
@@ -650,8 +656,8 @@
 
       <div class="modal-body">
         <form id="formAddTag" class="form-add-tag" onsubmit="return false;">
-          <div class="form-row" style="margin-bottom: 0;">
-            <div class="form-group flex-3" style="margin-bottom: 0;">
+          <div class="form-row">
+            <div class="form-group flex-3">
               <input 
                 type="text" 
                 id="newTagNameInput" 
@@ -661,8 +667,8 @@
               />
               <span class="form-error" id="newTagError"></span>
             </div>
-            <div class="form-group flex-1" style="margin-bottom: 0;">
-              <button type="button" class="btn btn-primary" id="btnAddTagBtn" style="width: 100%; height: 42px;">
+            <div class="form-group flex-1">
+              <button type="button" class="btn btn-primary" id="btnAddTagBtn">
                 Adicionar
               </button>
             </div>
@@ -698,18 +704,18 @@
           </svg>
           <div>
             <h3 class="modal-title" id="modalChartsTitle">Análise Visual de Despesas</h3>
-            <p class="modal-subtitle" id="chartsModalSubtitle" style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">Visualização de Gastos</p>
+            <p class="modal-subtitle" id="chartsModalSubtitle">Visualização de Gastos</p>
           </div>
         </div>
         <button type="button" class="modal-btn-close" id="btnCloseChartsModal" aria-label="Fechar gráficos" title="Fechar">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <line x1="18" y1="6" x2="6" y2="18"></line>
             <line x1="6" y1="6" x2="18" y2="18"></line>
           </svg>
         </button>
       </div>
 
-      <div class="modal-body" style="padding-bottom: 24px;">
+      <div class="modal-body">
         <!-- Barra de Controles: Período e Agrupamento -->
         <div class="charts-controls-bar">
           <!-- Alternância de Período -->

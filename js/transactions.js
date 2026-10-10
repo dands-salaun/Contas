@@ -98,8 +98,13 @@ export function updateTransRepasseVisibility(category) {
   if (!DOM.transRepasseGroup || !DOM.transRepasseSelect) return;
 
   const isCreditCard = category && normalizeCategoryType(category.type) === 'Cartão de Crédito';
+  const showRepasse = Boolean(isCreditCard && !AppState.editingTransactionId);
 
-  if (isCreditCard && !AppState.editingTransactionId) {
+  if (DOM.transactionForm) {
+    DOM.transactionForm.classList.toggle('has-repasse', showRepasse);
+  }
+
+  if (showRepasse) {
     DOM.transRepasseGroup.style.display = 'flex';
     DOM.transRepasseSelect.innerHTML = '<option value="">Nenhum repasse vinculado</option>';
 
@@ -181,6 +186,7 @@ export function startEditingTransaction(id) {
     DOM.transRepasseGroup.style.display = 'none';
   }
 
+  DOM.transactionForm?.classList.remove('has-repasse');
   DOM.transactionForm?.classList.add('edit-mode');
 
   if (DOM.transactionTableBody) {

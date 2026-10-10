@@ -649,36 +649,48 @@ function setCloudStatus(state, customText) {
 
   DOM.cloudStatus.classList.remove('syncing', 'synced', 'error', 'disconnected', 'pending');
 
+  let defaultText = '';
   if (state === 'syncing') {
     DOM.cloudStatus.classList.add('syncing');
-    DOM.cloudStatus.textContent = customText || '🔄 A sincronizar...';
+    defaultText = '🔄 A sincronizar...';
     DOM.cloudStatus.style.color = '#f59e0b';
     DOM.cloudStatus.style.borderColor = 'rgba(245, 158, 11, 0.4)';
     DOM.cloudStatus.style.backgroundColor = 'rgba(245, 158, 11, 0.12)';
   } else if (state === 'synced') {
     DOM.cloudStatus.classList.add('synced');
-    DOM.cloudStatus.textContent = customText || '☁️ Nuvem Atualizada';
+    defaultText = '☁️ Nuvem Atualizada';
     DOM.cloudStatus.style.color = '#10b981';
     DOM.cloudStatus.style.borderColor = 'rgba(16, 185, 129, 0.35)';
     DOM.cloudStatus.style.backgroundColor = 'rgba(16, 185, 129, 0.12)';
   } else if (state === 'pending') {
     DOM.cloudStatus.classList.add('pending');
-    DOM.cloudStatus.textContent = customText || '🔑 Chave Salva';
+    defaultText = '🔑 Chave Salva';
     DOM.cloudStatus.style.color = '#3b82f6';
     DOM.cloudStatus.style.borderColor = 'rgba(59, 130, 246, 0.4)';
     DOM.cloudStatus.style.backgroundColor = 'rgba(59, 130, 246, 0.12)';
   } else if (state === 'error') {
     DOM.cloudStatus.classList.add('error');
-    DOM.cloudStatus.textContent = customText || '⚠️ Erro na Nuvem';
+    defaultText = '⚠️ Erro na Nuvem';
     DOM.cloudStatus.style.color = '#ef4444';
     DOM.cloudStatus.style.borderColor = 'rgba(239, 68, 68, 0.4)';
     DOM.cloudStatus.style.backgroundColor = 'rgba(239, 68, 68, 0.12)';
   } else {
     DOM.cloudStatus.classList.add('disconnected');
-    DOM.cloudStatus.textContent = customText || '☁️ Nuvem Desconectada';
+    defaultText = '☁️ Nuvem Desconectada';
     DOM.cloudStatus.style.color = '';
     DOM.cloudStatus.style.borderColor = '';
     DOM.cloudStatus.style.backgroundColor = '';
+  }
+
+  const fullText = customText || defaultText;
+  DOM.cloudStatus.title = fullText;
+  DOM.cloudStatus.setAttribute('aria-label', fullText);
+
+  const match = fullText.match(/^(\S+)\s*(.*)$/);
+  if (match && match[2]) {
+    DOM.cloudStatus.innerHTML = `<span class="status-icon">${match[1]}</span> <span class="status-text">${escapeHTML(match[2])}</span>`;
+  } else {
+    DOM.cloudStatus.innerHTML = `<span class="status-text">${escapeHTML(fullText)}</span>`;
   }
 }
 
@@ -4004,8 +4016,13 @@ function updateTransRepasseVisibility(category) {
   if (!DOM.transRepasseGroup || !DOM.transRepasseSelect) return;
 
   const isCreditCard = category && normalizeCategoryType(category.type) === 'Cartão de Crédito';
+  const showRepasse = Boolean(isCreditCard && !AppState.editingTransactionId);
 
-  if (isCreditCard && !AppState.editingTransactionId) {
+  if (DOM.transactionForm) {
+    DOM.transactionForm.classList.toggle('has-repasse', showRepasse);
+  }
+
+  if (showRepasse) {
     DOM.transRepasseGroup.style.display = 'flex';
     DOM.transRepasseSelect.innerHTML = '<option value="">Nenhum repasse vinculado</option>';
 
@@ -4087,6 +4104,7 @@ function startEditingTransaction(id) {
     DOM.transRepasseGroup.style.display = 'none';
   }
 
+  DOM.transactionForm?.classList.remove('has-repasse');
   DOM.transactionForm?.classList.add('edit-mode');
 
   if (DOM.transactionTableBody) {
