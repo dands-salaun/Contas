@@ -1749,8 +1749,10 @@
       });
       const moradiaTag = byTag.items.find(i => i.label === 'Moradia');
       expect(moradiaTag.total).toBe(2000);
-      const semClassifTag = byTag.items.find(i => i.label === 'Sem Classificação');
-      expect(semClassifTag.total).toBe(1200); // Cartão Black não tinha tag
+      // Cartão Black não tinha tag definida, adota fallback pelo tipo da conta ('Cartão de Crédito')
+      const cartaoFallback = byTag.items.find(i => i.label === 'Cartão de Crédito');
+      expect(cartaoFallback).toBeTruthy();
+      expect(cartaoFallback.total).toBe(1200);
     });
 
     it('9.4 calculateMonthlyEvolutionData: retorna os 12 meses com despesas, receitas e maxExpense', () => {
@@ -1779,13 +1781,14 @@
       expect(filledSVG.includes('Total Gasto')).toBe(true);
     });
 
-    it('9.6 onChartMonthChange: altera mês ativo, atualiza AppState.selectedMonthIndex e recalcula dados do gráfico', () => {
+    it('9.6 onChartMonthChange: altera mês do gráfico de forma independente sem alterar AppState.selectedMonthIndex', () => {
       Financas.AppState.selectedMonthIndex = 0; // Janeiro
-      Financas.onChartMonthChange(5); // Muda para Junho (índice 5)
-      expect(Financas.AppState.selectedMonthIndex).toBe(5);
+      Financas.onChartMonthChange(5); // Muda gráfico para Junho (índice 5)
+      // O Dashboard permanece protegido no mês de origem (0)
+      expect(Financas.AppState.selectedMonthIndex).toBe(0);
 
-      Financas.onChartMonthChange(10); // Muda para Novembro (índice 10)
-      expect(Financas.AppState.selectedMonthIndex).toBe(10);
+      Financas.onChartMonthChange(10); // Muda gráfico para Novembro (índice 10)
+      expect(Financas.AppState.selectedMonthIndex).toBe(0);
     });
 
     it('9.7 Gráficos aceitam estornos e valores negativos, deduzindo corretamente do total de despesas', () => {
@@ -1979,18 +1982,12 @@
       expect(chart.items[0].total).toBe(300);
     });
 
-    it('9.14 onChartMonthChange e changeYear encerram edição pendente e sincronizam estado', () => {
+    it('9.14 changeYear encerra edição pendente e sincroniza estado', () => {
       Financas.AppState.editingTransactionId = 'fake_edit_id';
 
       // Muda o ano via changeYear
       Financas.changeYear(1);
       expect(Financas.AppState.editingTransactionId).toBe(null);
-
-      // Seta novamente para testar troca de mês no gráfico
-      Financas.AppState.editingTransactionId = 'fake_edit_id_2';
-      Financas.onChartMonthChange(3);
-      expect(Financas.AppState.editingTransactionId).toBe(null);
-      expect(Financas.AppState.selectedMonthIndex).toBe(3);
 
       // Verifica se updateMonthTotal e isParcelada estão exportados em window.Financas
       expect(typeof Financas.updateMonthTotal).toBe('function');

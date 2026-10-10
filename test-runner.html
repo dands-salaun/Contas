@@ -283,6 +283,7 @@
       document.getElementById('valPassed').textContent = results.passed;
       document.getElementById('valFailed').textContent = results.failed;
       document.getElementById('valDuration').textContent = results.durationMs + ' ms';
+      document.title = `TESTS_DONE: ${results.passed}/${results.totalTests} (Failed: ${results.failed})`;
 
       container.innerHTML = '';
 
